@@ -24,7 +24,7 @@ export function RoomPage() {
   const { roomId } = useParams<{ roomId: string }>()
   const navigate = useNavigate()
   const { playerId, playerName, myRole, gameState, fishjamToken, lastTranscript } = useGameStore()
-  const { send, wsRef } = useGameSocket()
+  const { send } = useGameSocket()
   const { metrics: faceMetrics, setVideoElement, startAnalysis, stopAnalysis, onMetrics } = useFaceAnalysis()
   const { speak: botSpeak } = useBotTTS()
   const pendingBotSpeech = useGameStore((s) => s.pendingBotSpeech)
