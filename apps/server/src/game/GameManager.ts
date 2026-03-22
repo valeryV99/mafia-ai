@@ -109,9 +109,47 @@ export class GameManager {
   }
 
   private voiceAgents: Map<string, VoiceAgent> = new Map()
+  private voiceAgentCount = 0
+
+  private static readonly VOICE_AGENT_POOL = [
+    {
+      name: 'Marcus',
+      persona: 'The Skeptic — calm, analytical, always demands logic and evidence before trusting anyone. Speaks slowly and deliberately. Uses phrases like "that doesn\'t add up" and "prove it".',
+      voice: 'Charon',
+    },
+    {
+      name: 'Sophie',
+      persona: 'The Empath — warm, perceptive, tries to defend the innocent. Speaks gently but gets very emotional when someone is accused unfairly. Uses phrases like "I just feel like..." and "something seems off".',
+      voice: 'Kore',
+    },
+    {
+      name: 'Rex',
+      persona: 'The Hothead — aggressive and impulsive, quick to accuse, loud and dominant. Speaks fast and interrupts. Uses phrases like "obviously it\'s you!" and "stop making excuses".',
+      voice: 'Fenrir',
+    },
+    {
+      name: 'Luna',
+      persona: 'The Strategist — cold, calculated, treats the game like a puzzle. Speaks in probabilities and patterns. Uses phrases like "statistically speaking" and "your behavior is consistent with mafia".',
+      voice: 'Aoede',
+    },
+    {
+      name: 'Finn',
+      persona: 'The Joker — deflects with humor, hard to read, charismatic and likeable. Uses jokes to avoid suspicion. Uses phrases like "relax guys, it\'s just a game" and "okay okay, you got me... jk".',
+      voice: 'Puck',
+    },
+    {
+      name: 'Vera',
+      persona: 'The Paranoid — anxious, suspects everyone, constantly changes her mind, talks fast. Uses phrases like "wait no I changed my mind" and "I don\'t trust anyone here".',
+      voice: 'Zephyr',
+    },
+  ]
 
   // Add this new method
-  async addVoiceAgent(name: string = 'Alex') {
+  async addVoiceAgent() {
+    const pool = GameManager.VOICE_AGENT_POOL
+    const agentDef = pool[this.voiceAgentCount % pool.length]
+    const { name, persona, voice } = agentDef
+    this.voiceAgentCount++
     const apiKey = process.env.GEMINI_API_KEY
     const fishjamId = process.env.FISHJAM_URL?.match(/\/\/([^.]+)/)?.[1]
     const managementToken = process.env.FISHJAM_MANAGEMENT_TOKEN
@@ -126,6 +164,8 @@ export class GameManager {
       return { error: 'Room not initialized' }
     }
 
+    const fishjamRoomId = this.fishjamRoomId
+
     const player = this.addBot(name)
 
     // 2. Define the tools available to a player
@@ -139,22 +179,30 @@ export class GameManager {
         name: 'night_kill',
         description: 'Mafia only: Choose a player to kill at night',
         parameters: { type: 'OBJECT', properties: { target: { type: 'STRING' } }, required: ['target'] }
-      }
+      },
+      {
+        name: 'investigate',
+        description: 'Detective only: Investigate a player to learn their role',
+        parameters: { type: 'OBJECT', properties: { target: { type: 'STRING' } }, required: ['target'] }
+      },
+      {
+        name: 'doctor_save',
+        description: 'Doctor only: Protect a player from being killed tonight',
+        parameters: { type: 'OBJECT', properties: { target: { type: 'STRING' } }, required: ['target'] }
+      },
     ]
 
-    const agent = new VoiceAgent(name, apiKey, fishjamId, managementToken)
+    const agent = new VoiceAgent(name, apiKey, fishjamId, managementToken, persona, voice)
 
     // 3. Join with the action handler
     await agent.join(
-        this.fishjamRoomId,
+        fishjamRoomId,
         player.role,
         playerTools,
         (name, args) => {
-          // We reuse the existing GM command handler!
-          // We just need to make sure the "voter" is Alex
           this.handleGeminiCommand({
             action: name,
-            voter: player.name, // Force Alex as the voter
+            voter: player.name,
             target: args.target
           } as any)
         }
@@ -229,6 +277,11 @@ export class GameManager {
     this.state.players.forEach((player, i) => {
       this.log('startGame', `${player.name} → ${player.role}`)
       this.sendToPlayer(player.id, { type: 'role_assigned', role: player.role })
+
+      // Notify voice agents of their real role
+      if (this.voiceAgents.has(player.name)) {
+        this.voiceAgents.get(player.name)!.notifyRole(player.role)
+      }
 
       // Create bot agents
       // FIX: Only create a BotAgent if there isn't already a VoiceAgent with this name
@@ -366,13 +419,10 @@ export class GameManager {
     ]
 
     this.log('timing', `initGemini START at ${Date.now()}`)
-    await this.bridge.start(this.fishjamRoomId, prompt, tools)
-    this.log('timing', `Bridge READY at ${Date.now()} — Fishjam+Gemini connected`)
-    this.log('gemini', 'AgentBridge started — Gemini is now a ghost peer in the room')
+    await this.bridge.start(this.fishjamRoomId, prompt, tools, 'Orus', false)
+    this.log('timing', `Bridge READY at ${Date.now()} — Game Master connected and audible`)
 
     setTimeout(() => this.startNight(), GAME_CONSTANTS.ROLE_REVEAL_DELAY)
-    await this.bridge.start(this.fishjamRoomId, prompt, tools, 'Orus', false)
-    this.log('gemini', 'AgentBridge started — Game Master is now AUDIBLE')
   }
 
   private handleGeminiCommand(cmd: Record<string, string>) {
@@ -480,8 +530,8 @@ export class GameManager {
         this.votes.set(voter.id, target.id)
         this.broadcastEvent({ type: 'vote_cast', fromId: voter.id, targetId: target.id })
 
-        const alivePlayers = this.state.players.filter((p) => p.status === 'alive')
-        if (this.votes.size >= alivePlayers.length) {
+        const eligibleVoters = this.state.players.filter((p) => p.status === 'alive' && (p.isConnected || this.isBot(p.name)))
+        if (this.votes.size >= eligibleVoters.length) {
           this.resolveVotes()
         }
         break
@@ -614,8 +664,8 @@ export class GameManager {
           this.broadcastEvent({ type: 'vote_cast', fromId: voter.id, targetId: mentioned.id })
           // Send transcript confirmation so player sees it
           this.broadcastEvent({ type: 'transcript', speaker: 'gemini', text: `${voter.name} votes for ${mentioned.name}.` })
-          const alive = this.state.players.filter((p) => p.status === 'alive')
-          if (this.votes.size >= alive.length) this.resolveVotes()
+          const eligibleVoters = this.state.players.filter((p) => p.status === 'alive' && (p.isConnected || this.isBot(p.name)))
+          if (this.votes.size >= eligibleVoters.length) this.resolveVotes()
         }, 1500)
       }
     }
@@ -654,8 +704,8 @@ export class GameManager {
       this.broadcastEvent({ type: 'vote_cast', fromId: player.id, targetId: mentioned.id })
       this.broadcastEvent({ type: 'transcript', speaker: 'gemini', text: `${player.name} votes for ${mentioned.name}.` })
       this.log('textCommand', `Vote: ${player.name} → ${mentioned.name}`)
-      const alive = this.state.players.filter((p) => p.status === 'alive')
-      if (this.votes.size >= alive.length) this.resolveVotes()
+      const eligibleVoters = this.state.players.filter((p) => p.status === 'alive' && (p.isConnected || this.isBot(p.name)))
+      if (this.votes.size >= eligibleVoters.length) this.resolveVotes()
     } else if (this.state.phase === 'day') {
       this.broadcastEvent({ type: 'transcript', speaker: 'player', text })
       this.bridge?.sendText(`[PLAYER] ${player.name} says: "${text}"`)
@@ -909,6 +959,22 @@ export class GameManager {
       `CRITICAL: When human says a name like "Alexa" or "I choose Bruno" — you MUST call the function with that name. Do not just acknowledge verbally.`
     )
 
+    // Send direct night instructions to each VoiceAgent based on their role
+    this.voiceAgents.forEach((agent, agentName) => {
+      const player = this.state.players.find((p) => p.name === agentName && p.status === 'alive')
+      if (!player) return
+      const targets = this.state.players
+        .filter((p) => p.status === 'alive' && p.name !== agentName)
+        .map((p) => p.name).join(', ')
+      if (player.role === 'mafia') {
+        agent.sendContext(`[GAME] Night ${this.state.day}: You are Mafia. Call night_kill now. Choose from: ${targets}.`)
+      } else if (player.role === 'detective') {
+        agent.sendContext(`[GAME] Night ${this.state.day}: You are the Detective. Call investigate now. Choose from: ${targets}.`)
+      } else if (player.role === 'doctor') {
+        agent.sendContext(`[GAME] Night ${this.state.day}: You are the Doctor. Call doctor_save now. Choose from: ${targets}.`)
+      }
+    })
+
     // Run bot night actions after delay (give human time to speak first)
     setTimeout(() => this.runBotNightActions(), 15_000)
 
@@ -1122,6 +1188,16 @@ export class GameManager {
       `[SYSTEM] Voting time! Alive players: ${aliveList}. First announce that voting begins (2-3 dramatic sentences). Then call each player by name and ask who they want to eliminate. After each player answers, call the cast_vote function. After all players have voted, the system will resolve automatically.`
     )
 
+    // Send direct voting instructions to each VoiceAgent
+    this.voiceAgents.forEach((agent, agentName) => {
+      const player = this.state.players.find((p) => p.name === agentName && p.status === 'alive')
+      if (!player) return
+      const targets = this.state.players
+        .filter((p) => p.status === 'alive' && p.name !== agentName)
+        .map((p) => p.name).join(', ')
+      agent.sendContext(`[GAME] Voting phase: Call cast_vote now. Choose who to eliminate from: ${targets}.`)
+    })
+
     // Run bot votes after 5 seconds
     setTimeout(() => {
       if (this.state.phase === 'voting') {
@@ -1172,7 +1248,7 @@ export class GameManager {
       if (count > maxVotes) maxVotes = count
     })
 
-    let eliminatedId = ''
+    let eliminatedId: string | null = null
     if (maxVotes > 0) {
       const tiedPlayers: string[] = []
       voteCounts.forEach((count, playerId) => {

@@ -36,7 +36,7 @@ export type ServerEvent =
   | { type: 'phase_changed'; phase: Phase; state: GameState }
   | { type: 'player_eliminated'; playerId: string; role: Role }
   | { type: 'vote_cast'; fromId: string; targetId: string }
-  | { type: 'vote_result'; eliminatedId: string; votes: Record<string, string> }
+  | { type: 'vote_result'; eliminatedId: string | null; votes: Record<string, string> }
   | { type: 'speaker_changed'; speakerId: string | null }
   | { type: 'game_over'; winner: 'mafia' | 'civilians'; state: GameState }
   | { type: 'investigation_result'; targetName: string; targetRole: Role }
