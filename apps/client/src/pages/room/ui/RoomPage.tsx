@@ -249,14 +249,9 @@ export function RoomPage() {
           <AiAnalysis />
         )}
 
-        {/* Night actions */}
-        {isNight && isAlive && myRole && playerId && (
-          <NightPanel
-            players={gameState.players}
-            currentPlayerId={playerId}
-            myRole={myRole}
-            onAction={(targetId) => send({ type: 'night_action', targetId })}
-          />
+        {/* Night panel */}
+        {isNight && isAlive && (
+          <NightPanel />
         )}
 
         {/* Lobby: add bots + start */}

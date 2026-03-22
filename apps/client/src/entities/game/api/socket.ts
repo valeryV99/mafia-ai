@@ -17,6 +17,7 @@ export function useGameSocket() {
   const pendingMessages = useRef<ClientEvent[]>([])
   const onBinaryRef = useRef<((data: ArrayBuffer) => void) | null>(null)
   const playerClearTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  const narratorSafetyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     intentionalClose.current = false
@@ -84,17 +85,27 @@ export function useGameSocket() {
               clearVotes()
             }
             useGameStore.getState().setInvestigationResult(null)
-            // Proactively freeze countdown — narrator will announce the new phase
-            useGameStore.getState().setNarratorSpeaking(true)
             console.log(`%c[Phase] → ${msg.phase} at ${Date.now()}`, 'color: #34d399; font-weight: bold')
-            console.log(`%c[Timer] FROZEN on phase_changed → ${msg.phase} at ${Date.now()}`, 'color: #818cf8; font-weight: bold')
-            // Safety: unfreeze if narrator never fires turnComplete within 20s
-            setTimeout(() => {
-              if (useGameStore.getState().isNarratorSpeaking) {
-                useGameStore.getState().setNarratorSpeaking(false)
-                console.log(`%c[Timer] Safety reset — narrator never fired turnComplete`, 'color: #ef4444; font-weight: bold')
-              }
-            }, 20_000)
+
+            // Cancel previous safety timer (from earlier phase)
+            if (narratorSafetyTimer.current) {
+              clearTimeout(narratorSafetyTimer.current)
+              narratorSafetyTimer.current = null
+            }
+
+            // Only freeze timer for phases that have a narrator announcement
+            const phasesWithNarrator = ['night', 'day', 'voting', 'game_over']
+            if (phasesWithNarrator.includes(msg.phase)) {
+              useGameStore.getState().setNarratorSpeaking(true)
+              console.log(`%c[Timer] FROZEN → ${msg.phase} at ${Date.now()}`, 'color: #818cf8; font-weight: bold')
+              // Safety: unfreeze if narrator never fires turnComplete within 30s
+              narratorSafetyTimer.current = setTimeout(() => {
+                if (useGameStore.getState().isNarratorSpeaking) {
+                  useGameStore.getState().setNarratorSpeaking(false)
+                  console.log(`%c[Timer] Safety reset (phase: ${msg.phase})`, 'color: #ef4444; font-weight: bold')
+                }
+              }, 30_000)
+            }
             break
           }
           case 'player_eliminated':
@@ -129,20 +140,16 @@ export function useGameSocket() {
           case 'transcript': {
             const { appendGeminiTranscript, appendPlayerTranscript, clearPlayerTranscript, setNarratorSpeaking } = useGameStore.getState()
             if (msg.speaker === 'gemini') {
-              // Strip function call syntax Gemini leaks into speech transcription
               const clean = msg.text
-                .replace(/`\w+\([^`]*\)`/g, '')  // `func(args)` backtick format
-                .replace(/<ctrl\d+>/g, '')          // <ctrl46> control char markers
+                .replace(/`\w+\([^`]*\)`/g, '')
+                .replace(/<ctrl\d+>/g, '')
                 .trim()
               const wasAlreadySpeaking = useGameStore.getState().isNarratorSpeaking
               setNarratorSpeaking(true)
-              if (clean) {
-                appendGeminiTranscript(clean)
+              if (clean) appendGeminiTranscript(clean)
+              if (!wasAlreadySpeaking && clean) {
+                console.log(`%c[Narrator] speaking`, 'color: #fbbf24; font-weight: bold')
               }
-              if (!wasAlreadySpeaking) {
-                console.log(`%c[Narrator] SPEAKING start at ${Date.now()}`, 'color: #fbbf24; font-weight: bold')
-              }
-              console.log(`%c[STT] Game Master: "${msg.text}"`, 'color: #fbbf24; font-weight: bold')
             } else {
               const label = msg.playerName ?? 'Unknown'
               appendPlayerTranscript(label, msg.text)
