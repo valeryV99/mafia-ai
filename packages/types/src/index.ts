@@ -26,6 +26,8 @@ export interface GameState {
   day: number
   winner: 'mafia' | 'civilians' | null
   currentSpeakerId: string | null
+  voiceAgentIds: string[]
+  activeVoiceAgentId: string | null
 }
 
 // WebSocket Events — Server → Client
@@ -45,6 +47,7 @@ export type ServerEvent =
   | { type: 'suspicion_update'; playerId: string; playerName: string; score: number; reason: string }
   | { type: 'behavioral_note'; playerName: string; note: string }
   | { type: 'bot_speech'; playerName: string; playerId: string; message: string }
+  | { type: 'agent_mute_changed'; activeAgentId: string | null }
   | { type: 'error'; message: string }
 
 // WebSocket Events — Client → Server
@@ -57,3 +60,4 @@ export type ClientEvent =
   | { type: 'text_command'; text: string }
   | { type: 'face_metrics'; stress: number; surprise: number; happiness: number; lookingAway: boolean }
   | { type: 'add_voice_agent' }
+  | { type: 'set_active_agent'; agentId: string | null }

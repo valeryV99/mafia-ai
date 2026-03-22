@@ -33,6 +33,8 @@ export class GameManager {
       day: 1,
       winner: null,
       currentSpeakerId: null,
+      voiceAgentIds: [],
+      activeVoiceAgentId: null,
     }
     this.clients = new Map()
     log(roomId, 'init', 'Game created')
@@ -110,6 +112,7 @@ export class GameManager {
 
   private voiceAgents: Map<string, VoiceAgent> = new Map()
   private voiceAgentCount = 0
+  private activeVoiceAgentName: string | null = null
 
   private static readonly VOICE_AGENT_POOL = [
     {
@@ -217,6 +220,22 @@ export class GameManager {
     })
 
     return { ok: true, player }
+  }
+
+  setActiveVoiceAgent(agentId: string | null) {
+    const agentName = agentId
+      ? this.state.players.find((p) => p.id === agentId)?.name ?? null
+      : null
+
+    this.activeVoiceAgentName = agentName
+
+    // Mute all voice agents except the active one
+    this.voiceAgents.forEach((agent, name) => {
+      agent.setMuteInput(name !== agentName)
+    })
+
+    this.log('voiceAgent', `Active agent: ${agentName ?? 'none'}`)
+    this.broadcastEvent({ type: 'agent_mute_changed', activeAgentId: agentId })
   }
 
   isBot(name: string): boolean {
@@ -1373,12 +1392,22 @@ export class GameManager {
   }
 
   getPublicState(): GameState {
+    const voiceAgentIds = [...this.voiceAgents.keys()]
+      .map((name) => this.state.players.find((p) => p.name === name)?.id)
+      .filter((id): id is string => !!id)
+
+    const activeVoiceAgentId = this.activeVoiceAgentName
+      ? (this.state.players.find((p) => p.name === this.activeVoiceAgentName)?.id ?? null)
+      : null
+
     return {
       ...this.state,
       players: this.state.players.map((p) => ({
         ...p,
         role: p.status === 'dead' ? p.role : 'civilian',
       })),
+      voiceAgentIds,
+      activeVoiceAgentId,
     }
   }
 }

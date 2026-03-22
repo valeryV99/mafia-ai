@@ -58,8 +58,15 @@ TOOLS USAGE:
         // skipVAD=false: use floor-control VAD for real-time conversation via SFU
         await this.bridge.start(roomId, prompt, tools, this.voice, false)
 
+        // Start muted — user must explicitly unmute to talk to this agent
+        this.bridge.setMuteInput(true)
+
         this.isConnected = true
         console.log(`[VoiceAgent:${this.name}] Joined as ${role} with ${tools.length} tools.`)
+    }
+
+    setMuteInput(muted: boolean) {
+        this.bridge.setMuteInput(muted)
     }
 
     sendContext(text: string) {

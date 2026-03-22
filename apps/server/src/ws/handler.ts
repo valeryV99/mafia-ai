@@ -143,6 +143,14 @@ export async function handleClientEvent(
       break
     }
 
+    case 'set_active_agent': {
+      const game = findGameByPlayer(ws.data.playerId)
+      if (game) {
+        game.setActiveVoiceAgent(event.agentId)
+      }
+      break
+    }
+
     default: {
       ws.send(JSON.stringify({ type: 'error', message: `Unknown event type: ${(event as any).type}` }))
       break

@@ -67,6 +67,7 @@ export function useGameSocket() {
           case 'room_joined':
             setPlayerId(msg.playerId)
             setGameState(msg.state)
+            useGameStore.getState().setActiveVoiceAgent(msg.state.activeVoiceAgentId ?? null)
             console.log('%c[WS] Joined as', 'color: #4ade80', msg.playerId, 'players:', msg.state.players.map((p: any) => p.name))
             if (msg.fishjamToken) {
               setFishjamToken(msg.fishjamToken)
@@ -183,6 +184,11 @@ export function useGameSocket() {
             const { setPendingBotSpeech } = useGameStore.getState()
             setPendingBotSpeech({ playerName: msg.playerName, message: msg.message })
             console.log(`%c[Bot:${msg.playerName}] ${msg.message}`, 'color: #22d3ee; font-weight: bold')
+            break
+          }
+          case 'agent_mute_changed': {
+            useGameStore.getState().setActiveVoiceAgent(msg.activeAgentId)
+            console.log(`%c[Agent] Active voice agent: ${msg.activeAgentId ?? 'none'}`, 'color: #a78bfa; font-weight: bold')
             break
           }
           case 'game_over':

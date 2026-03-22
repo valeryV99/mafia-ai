@@ -242,6 +242,7 @@ export function RoomPage() {
           playerName={playerName}
           localPeer={localPeer}
           remotePeers={remotePeers}
+          send={send}
         />
 
         {/* AI Analysis panel */}

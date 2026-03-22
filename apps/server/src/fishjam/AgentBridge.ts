@@ -20,6 +20,7 @@ export class AgentBridge {
   private geminiSession: Session | null = null
   private callbacks: AgentBridgeCallbacks = {}
   private muteOutput = false
+  private muteInput = false
 
   // VAD floor control
   private activeSpeakerId: string | null = null
@@ -99,6 +100,8 @@ export class AgentBridge {
     let trackDataCount = 0
     let lastTrackLogAt = 0
     agent.on('trackData', (event: any) => {
+      if (this.muteInput) return
+
       const { peerId, data } = event
       trackDataCount++
 
@@ -268,6 +271,11 @@ export class AgentBridge {
     } catch (err) {
       this.log('sendText', 'ERROR:', err)
     }
+  }
+
+  setMuteInput(muted: boolean) {
+    this.muteInput = muted
+    this.log('mute', `Input ${muted ? 'MUTED' : 'UNMUTED'}`)
   }
 
   isAlive(): boolean {
