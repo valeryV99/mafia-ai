@@ -113,6 +113,16 @@ export class GameManager {
   private voiceAgents: Map<string, VoiceAgent> = new Map()
   private voiceAgentCount = 0
   private activeVoiceAgentName: string | null = null
+  private speakingVoiceAgents = new Set<string>()
+  private pendingAfterSpeech: (() => void) | null = null
+
+  private afterAnyVoiceAgentStops(fn: () => void) {
+    if (this.speakingVoiceAgents.size === 0) {
+      fn()
+    } else {
+      this.pendingAfterSpeech = fn
+    }
+  }
 
   private static readonly VOICE_AGENT_POOL = [
     {
@@ -208,6 +218,19 @@ export class GameManager {
             voter: player.name,
             target: args.target
           } as any)
+        },
+        (speaking) => {
+          if (speaking) {
+            this.speakingVoiceAgents.add(player.name)
+          } else {
+            this.speakingVoiceAgents.delete(player.name)
+            if (this.speakingVoiceAgents.size === 0 && this.pendingAfterSpeech) {
+              const fn = this.pendingAfterSpeech
+              this.pendingAfterSpeech = null
+              fn()
+            }
+          }
+          this.broadcastEvent({ type: 'speaker_changed', speakerId: speaking ? player.id : null })
         }
     )
 
@@ -229,13 +252,17 @@ export class GameManager {
 
     this.activeVoiceAgentName = agentName
 
-    // Mute all voice agents except the active one
+    // Mute all voice agents except the active one (both input and output)
     this.voiceAgents.forEach((agent, name) => {
-      agent.setMuteInput(name !== agentName)
+      const isMuted = name !== agentName
+      agent.setMuteInput(isMuted)
+      agent.setMuteOutput(isMuted)
     })
 
     this.log('voiceAgent', `Active agent: ${agentName ?? 'none'}`)
     this.broadcastEvent({ type: 'agent_mute_changed', activeAgentId: agentId })
+    // Clear any speaking indicator immediately — muted agents must not show as speaking
+    this.broadcastEvent({ type: 'speaker_changed', speakerId: null })
   }
 
   isBot(name: string): boolean {
@@ -286,6 +313,12 @@ export class GameManager {
       return { error: `Need at least ${GAME_CONSTANTS.MIN_PLAYERS} players to start` }
     }
 
+    // Wait for any speaking voice agent to finish before starting
+    this.afterAnyVoiceAgentStops(() => this.doStartGame())
+    return { ok: true }
+  }
+
+  private doStartGame() {
     this.log('startGame', `Starting with ${this.state.players.length} players`)
     this.assignRoles()
     this.state.phase = 'role_assignment'
@@ -315,8 +348,6 @@ export class GameManager {
 
     this.log('timing', `startGame: initGemini launched, waiting for bridge before startNight`)
     this.initGemini()
-
-    return { ok: true }
   }
 
   private assignRoles() {
@@ -1102,12 +1133,12 @@ export class GameManager {
       }
     }
 
-    // Wait for narrator to finish before starting day
+    // Wait for narrator AND any speaking voice agent to finish before starting day
     this.log('timing', `resolveNight done at ${Date.now()} — awaiting turnComplete before startDay`)
     if (this.bridge) {
-      this.bridge.afterNarratorFinishes(() => this.startDay(eliminatedId))
+      this.bridge.afterNarratorFinishes(() => this.afterAnyVoiceAgentStops(() => this.startDay(eliminatedId)))
     } else {
-      setTimeout(() => this.startDay(eliminatedId), 3000)
+      setTimeout(() => this.afterAnyVoiceAgentStops(() => this.startDay(eliminatedId)), 3000)
     }
   }
 
@@ -1307,9 +1338,9 @@ export class GameManager {
       )
       this.log('timing', `resolveVoting done at ${Date.now()} — awaiting turnComplete before startNight`)
       if (this.bridge) {
-        this.bridge.afterNarratorFinishes(() => this.startNight())
+        this.bridge.afterNarratorFinishes(() => this.afterAnyVoiceAgentStops(() => this.startNight()))
       } else {
-        setTimeout(() => this.startNight(), GAME_CONSTANTS.ROLE_REVEAL_DELAY)
+        setTimeout(() => this.afterAnyVoiceAgentStops(() => this.startNight()), GAME_CONSTANTS.ROLE_REVEAL_DELAY)
       }
     }
   }
@@ -1320,6 +1351,19 @@ export class GameManager {
 
     player.status = 'dead'
     this.log('eliminate', `${player.name} (${player.role}) eliminated!`)
+
+    // Silence and disconnect the voice agent if this player was one
+    const voiceAgent = this.voiceAgents.get(player.name)
+    if (voiceAgent) {
+      voiceAgent.setMuteInput(true)
+      voiceAgent.setMuteOutput(true)
+      voiceAgent.disconnect()
+      this.voiceAgents.delete(player.name)
+      this.speakingVoiceAgents.delete(player.name)
+      this.broadcastEvent({ type: 'speaker_changed', speakerId: null })
+      this.log('eliminate', `Voice agent ${player.name} disconnected`)
+    }
+
     this.broadcastEvent({ type: 'player_eliminated', playerId, role: player.role })
     this.checkWinCondition()
   }

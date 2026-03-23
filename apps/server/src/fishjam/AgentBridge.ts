@@ -213,10 +213,13 @@ export class AgentBridge {
       }
       this.narratorSpeaking = true
       this.log('said', `"${text}"`)
-      this.callbacks.onTranscript?.('gemini', text)
+      // Only fire transcript/speaking callbacks when output is not muted
+      if (!this.muteOutput) {
+        this.callbacks.onTranscript?.('gemini', text)
+      }
     }
 
-    // Turn complete
+    // Turn complete — fire immediately (green light clears on DONE log)
     if (msg.serverContent?.turnComplete) {
       const duration = Date.now() - this.narratorStartedAt
       this.log('narrator', `DONE after ${(duration / 1000).toFixed(1)}s`)
@@ -273,9 +276,31 @@ export class AgentBridge {
     }
   }
 
+  // Inject context silently — model receives the info but does NOT generate a response
+  sendSilentContext(message: string) {
+    this.log('sendSilentContext', message.slice(0, 100))
+    try {
+      this.geminiSession?.sendClientContent({
+        turns: [{ role: 'user', parts: [{ text: message }] }],
+        turnComplete: false,
+      })
+    } catch (err) {
+      this.log('sendSilentContext', 'ERROR:', err)
+    }
+  }
+
   setMuteInput(muted: boolean) {
     this.muteInput = muted
     this.log('mute', `Input ${muted ? 'MUTED' : 'UNMUTED'}`)
+  }
+
+  setMuteOutput(muted: boolean) {
+    this.muteOutput = muted
+    this.log('mute', `Output ${muted ? 'MUTED' : 'UNMUTED'}`)
+    // Interrupt any buffered audio already queued in Fishjam when muting mid-speech
+    if (muted && this.agent && this.agentTrackId) {
+      this.agent.interruptTrack(this.agentTrackId as any)
+    }
   }
 
   isAlive(): boolean {

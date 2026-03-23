@@ -114,11 +114,6 @@ export function useGameSocket() {
           case 'speaker_changed': {
             const { setCurrentSpeaker } = useGameStore.getState()
             setCurrentSpeaker(msg.speakerId)
-            // Clear speaker after 3 seconds
-            setTimeout(() => {
-              const current = useGameStore.getState().currentSpeakerId
-              if (current === msg.speakerId) setCurrentSpeaker(null)
-            }, 3000)
             break
           }
           case 'investigation_result': {
