@@ -18,6 +18,7 @@ export function useAudioPipeline(wsRef: React.RefObject<WebSocket | null>) {
 
     const ctx = new AudioContext({ sampleRate: GEMINI_SAMPLE_RATE })
     playbackCtxRef.current = ctx
+    ctx.resume().catch(() => {})
 
     // Use ScriptProcessorNode to drain the buffer continuously
     const node = ctx.createScriptProcessor(4096, 1, 1)

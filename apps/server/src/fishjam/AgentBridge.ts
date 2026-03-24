@@ -190,6 +190,7 @@ export class AgentBridge {
           if (!this.muteOutput && this.agent && this.agentTrackId) {
             this.agent.sendData(this.agentTrackId as any, pcmData)
           }
+          this.callbacks.onGeminiAudio?.(pcmData)
         } else if (part.text !== undefined) {
           // text part — expected for native audio transcript fallback, skip silently
         } else {
@@ -315,6 +316,15 @@ export class AgentBridge {
   setMuteInput(muted: boolean) {
     this.muteInput = muted
     this.log('mute', `Input ${muted ? 'MUTED' : 'UNMUTED'}`)
+    if (muted) {
+      // Reset VAD state so reactivation always starts clean
+      this.activeSpeakerId = null
+      this.narratorSpeaking = false
+      if (this.silenceTimeout) {
+        clearTimeout(this.silenceTimeout)
+        this.silenceTimeout = null
+      }
+    }
   }
 
   setMuteOutput(muted: boolean) {

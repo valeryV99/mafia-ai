@@ -373,6 +373,10 @@ export class GameManager {
     }
 
     this.bridge.on({
+      onGeminiAudio: (audio) => {
+        this.broadcastBinary(audio)
+      },
+
       onTranscript: (speaker, text, speakerId) => {
         const playerName = speakerId ? this.fishjamPeerNames.get(speakerId) : undefined
         this.broadcastEvent({ type: 'transcript', speaker, text, playerName })
@@ -1092,6 +1096,10 @@ export class GameManager {
 
   broadcastEvent(event: ServerEvent) {
     this.clients.forEach((ws) => ws.send(JSON.stringify(event)))
+  }
+
+  broadcastBinary(data: Buffer) {
+    this.clients.forEach((ws) => ws.send(data))
   }
 
   sendToPlayer(playerId: string, event: ServerEvent) {

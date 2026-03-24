@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useConnection, usePeers, useCamera, useMicrophone, useInitializeDevices } from '@fishjam-cloud/react-client'
-import { useGameStore, useGameSocket, useFaceAnalysis } from '@/entities/game'
+import { useGameStore, useGameSocket, useFaceAnalysis, useAudioPipeline } from '@/entities/game'
 import { RoleCard } from '@/entities/player'
 import { PhaseOverlay } from '@/widgets/phase-overlay'
 import { VideoGrid } from '@/widgets/video-grid'
@@ -25,7 +25,8 @@ export function RoomPage() {
   const navigate = useNavigate()
   const { playerId, playerName, myRole, gameState, fishjamToken, lastTranscript } = useGameStore()
   const isNarratorSpeaking = useGameStore((s) => s.isNarratorSpeaking)
-  const { send } = useGameSocket()
+  const { send, wsRef, setOnBinary } = useGameSocket()
+  const { playAudio } = useAudioPipeline(wsRef)
   const { metrics: faceMetrics, setVideoElement, startAnalysis, stopAnalysis, onMetrics } = useFaceAnalysis()
 
   // Fishjam hooks
@@ -37,6 +38,11 @@ export function RoomPage() {
 
   const fishjamJoinInitiated = useRef(false)
   const autoMutedRef = useRef(false)
+
+  // Register WebSocket binary handler for Game Master audio
+  useEffect(() => {
+    setOnBinary(playAudio)
+  }, [setOnBinary, playAudio])
 
   // Auto-mute mic during phases where players cannot talk to each other
   useEffect(() => {
@@ -262,12 +268,23 @@ export function RoomPage() {
         {/* Lobby: add bots + start */}
         {isLobby && (
           <div className="flex flex-col items-center gap-3 mt-5">
-            <button
-              onClick={() => send({ type: 'add_voice_agent' })}
-              className="px-6 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold transition-colors"
-            >
-              + Add Voice Agent
-            </button>
+            {(() => {
+              const agentCount = gameState.voiceAgentIds?.length ?? 0
+              const atLimit = agentCount >= 3
+              return (
+                <button
+                  onClick={() => send({ type: 'add_voice_agent' })}
+                  disabled={atLimit}
+                  className={`px-6 py-2.5 rounded-lg font-bold transition-colors ${
+                    atLimit
+                      ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                      : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                  }`}
+                >
+                  {atLimit ? 'AI Agent Limit Reached (3/3)' : `+ Add Voice Agent (${agentCount}/3)`}
+                </button>
+              )
+            })()}
             <StartButton
               playerCount={gameState.players.length}
               minPlayers={4}
