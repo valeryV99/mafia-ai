@@ -15,7 +15,6 @@ interface GameStore {
   behavioralNotes: Array<{ playerName: string; note: string; timestamp: number }>
   faceMetrics: { stress: number; surprise: number; happiness: number; lookingAway: boolean } | null
   currentSpeakerId: string | null
-  pendingBotSpeech: { playerName: string; message: string } | null
   isNarratorSpeaking: boolean
   investigationResult: { targetName: string; targetRole: Role } | null
   activeVoiceAgentId: string | null
@@ -37,7 +36,6 @@ interface GameStore {
   addBehavioralNote: (playerName: string, note: string) => void
   setFaceMetrics: (m: { stress: number; surprise: number; happiness: number; lookingAway: boolean }) => void
   setCurrentSpeaker: (id: string | null) => void
-  setPendingBotSpeech: (s: { playerName: string; message: string } | null) => void
   setNarratorSpeaking: (val: boolean) => void
   setInvestigationResult: (r: { targetName: string; targetRole: Role } | null) => void
   setActiveVoiceAgent: (id: string | null) => void
@@ -58,7 +56,6 @@ export const useGameStore = create<GameStore>((set) => ({
   behavioralNotes: [],
   faceMetrics: null,
   currentSpeakerId: null,
-  pendingBotSpeech: null,
   isNarratorSpeaking: false,
   investigationResult: null,
   activeVoiceAgentId: null,
@@ -94,9 +91,8 @@ export const useGameStore = create<GameStore>((set) => ({
   })),
   setFaceMetrics: (faceMetrics) => set({ faceMetrics }),
   setCurrentSpeaker: (currentSpeakerId) => set({ currentSpeakerId }),
-  setPendingBotSpeech: (pendingBotSpeech) => set({ pendingBotSpeech }),
   setNarratorSpeaking: (isNarratorSpeaking) => set({ isNarratorSpeaking }),
   setInvestigationResult: (investigationResult) => set({ investigationResult }),
   setActiveVoiceAgent: (activeVoiceAgentId) => set({ activeVoiceAgentId }),
-  reset: () => set({ roomId: null, playerId: null, playerName: null, myRole: null, gameState: null, fishjamToken: null, lastTranscript: null, playerTranscripts: {}, votes: {}, suspicions: {}, behavioralNotes: [], faceMetrics: null, currentSpeakerId: null, pendingBotSpeech: null, isNarratorSpeaking: false, investigationResult: null, activeVoiceAgentId: null }),
+  reset: () => set({ roomId: null, playerId: null, playerName: null, myRole: null, gameState: null, fishjamToken: null, lastTranscript: null, playerTranscripts: {}, votes: {}, suspicions: {}, behavioralNotes: [], faceMetrics: null, currentSpeakerId: null, isNarratorSpeaking: false, investigationResult: null, activeVoiceAgentId: null }),
 }))
