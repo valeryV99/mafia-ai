@@ -69,6 +69,7 @@ export function useGameSocket() {
           case 'room_joined':
             setPlayerId(msg.playerId)
             setGameState(msg.state)
+            useGameStore.getState().setActiveVoiceAgent(msg.state.activeVoiceAgentId ?? null)
             console.log('%c[WS] Joined as', 'color: #4ade80', msg.playerId, 'players:', msg.state.players.map((p: any) => p.name))
             if (msg.fishjamToken) {
               setFishjamToken(msg.fishjamToken)
@@ -126,11 +127,6 @@ export function useGameSocket() {
           case 'speaker_changed': {
             const { setCurrentSpeaker } = useGameStore.getState()
             setCurrentSpeaker(msg.speakerId)
-            // Clear speaker after 3 seconds
-            setTimeout(() => {
-              const current = useGameStore.getState().currentSpeakerId
-              if (current === msg.speakerId) setCurrentSpeaker(null)
-            }, 3000)
             break
           }
           case 'investigation_result': {
@@ -188,6 +184,11 @@ export function useGameSocket() {
             const { addBehavioralNote } = useGameStore.getState()
             addBehavioralNote(msg.playerName, msg.note)
             console.log(`%c[Behavior] ${msg.playerName}: ${msg.note}`, 'color: #ec4899')
+            break
+          }
+          case 'agent_mute_changed': {
+            useGameStore.getState().setActiveVoiceAgent(msg.activeAgentId)
+            console.log(`%c[Agent] Active voice agent: ${msg.activeAgentId ?? 'none'}`, 'color: #a78bfa; font-weight: bold')
             break
           }
           case 'game_over':

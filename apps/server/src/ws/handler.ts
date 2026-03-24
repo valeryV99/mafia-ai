@@ -134,7 +134,15 @@ export async function handleClientEvent(
     case 'add_voice_agent': {
       const game = findGameByPlayer(ws.data.playerId)
       if (game) {
-        game.addVoiceAgent('Alex')
+        game.addVoiceAgent()
+      }
+      break
+    }
+
+    case 'set_active_agent': {
+      const game = findGameByPlayer(ws.data.playerId)
+      if (game) {
+        game.setActiveVoiceAgent(event.agentId)
       }
       break
     }

@@ -9,9 +9,12 @@ interface VideoTileProps {
   suspicion?: { score: number; reason: string }
   isSpeaking?: boolean
   transcript?: string
+  isAgent?: boolean
+  isAgentMuted?: boolean
+  onToggleMute?: () => void
 }
 
-export function VideoTile({ stream, name, isDead, isYou, isMuted, suspicion, isSpeaking, transcript }: VideoTileProps) {
+export function VideoTile({ stream, name, isDead, isYou, isMuted, suspicion, isSpeaking, transcript, isAgent, isAgentMuted, onToggleMute }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
 
   useEffect(() => {
@@ -55,6 +58,21 @@ export function VideoTile({ stream, name, isDead, isYou, isMuted, suspicion, isS
           <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" />
           SPEAKING
         </div>
+      )}
+
+      {/* AI agent mute toggle */}
+      {isAgent && !isDead && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggleMute?.() }}
+          className={`absolute top-7 right-1 text-[9px] px-1.5 py-0.5 rounded font-bold transition-colors ${
+            isAgentMuted
+              ? 'bg-red-700/90 hover:bg-red-600/90 text-white'
+              : 'bg-emerald-600/90 hover:bg-emerald-500/90 text-white animate-pulse'
+          }`}
+          title={isAgentMuted ? 'Unmute agent' : 'Mute agent'}
+        >
+          {isAgentMuted ? 'MUTED' : 'LIVE'}
+        </button>
       )}
 
       {/* SUS badge for high suspicion */}
