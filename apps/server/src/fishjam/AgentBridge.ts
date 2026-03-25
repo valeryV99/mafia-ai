@@ -9,6 +9,7 @@ export interface AgentBridgeCallbacks {
   onGeminiAudio?: (audio: Buffer) => void
   onTranscript?: (speaker: 'gemini' | 'player', text: string, speakerId?: string) => void
   onTurnComplete?: () => void
+  onSessionClose?: () => void
   onToolCall?: (name: string, args: Record<string, unknown>) => void
 }
 
@@ -94,7 +95,10 @@ export class AgentBridge {
       },
       callbacks: {
         onopen: () => this.log('gemini', `Session OPENED for ${this.name}`),
-        onclose: (e: any) => this.log('gemini', `Session CLOSED for ${this.name}: code=${e?.code || 'unknown'} reason=${e?.reason || 'none'}`),
+        onclose: (e: any) => {
+          this.log('gemini', `Session CLOSED for ${this.name}: code=${e?.code || 'unknown'} reason=${e?.reason || 'none'}`)
+          this.callbacks.onSessionClose?.()
+        },
         onerror: (e: any) => this.log('gemini', `Session ERROR for ${this.name}:`, e?.message || e),
         onmessage: (msg: any) => this.handleGeminiMessage(msg),
       },
