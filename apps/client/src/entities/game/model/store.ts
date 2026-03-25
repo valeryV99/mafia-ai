@@ -18,6 +18,8 @@ interface GameStore {
   isNarratorSpeaking: boolean
   investigationResult: { targetName: string; targetRole: Role } | null
   activeVoiceAgentId: string | null
+  agentsMuted: boolean
+  selectedAgentIds: string[]
 
   setRoomId: (id: string) => void
   setPlayerId: (id: string) => void
@@ -39,6 +41,8 @@ interface GameStore {
   setNarratorSpeaking: (val: boolean) => void
   setInvestigationResult: (r: { targetName: string; targetRole: Role } | null) => void
   setActiveVoiceAgent: (id: string | null) => void
+  setAgentsMuted: (muted: boolean) => void
+  setSelectedAgentIds: (ids: string[]) => void
   reset: () => void
 }
 
@@ -59,6 +63,8 @@ export const useGameStore = create<GameStore>((set) => ({
   isNarratorSpeaking: false,
   investigationResult: null,
   activeVoiceAgentId: null,
+  agentsMuted: false,
+  selectedAgentIds: [],
 
   setRoomId: (roomId) => set({ roomId }),
   setPlayerId: (playerId) => set({ playerId }),
@@ -94,5 +100,7 @@ export const useGameStore = create<GameStore>((set) => ({
   setNarratorSpeaking: (isNarratorSpeaking) => set({ isNarratorSpeaking }),
   setInvestigationResult: (investigationResult) => set({ investigationResult }),
   setActiveVoiceAgent: (activeVoiceAgentId) => set({ activeVoiceAgentId }),
-  reset: () => set({ roomId: null, playerId: null, playerName: null, myRole: null, gameState: null, fishjamToken: null, lastTranscript: null, playerTranscripts: {}, votes: {}, suspicions: {}, behavioralNotes: [], faceMetrics: null, currentSpeakerId: null, isNarratorSpeaking: false, investigationResult: null, activeVoiceAgentId: null }),
+  setAgentsMuted: (agentsMuted) => set({ agentsMuted }),
+  setSelectedAgentIds: (selectedAgentIds) => set({ selectedAgentIds }),
+  reset: () => set({ roomId: null, playerId: null, playerName: null, myRole: null, gameState: null, fishjamToken: null, lastTranscript: null, playerTranscripts: {}, votes: {}, suspicions: {}, behavioralNotes: [], faceMetrics: null, currentSpeakerId: null, isNarratorSpeaking: false, investigationResult: null, activeVoiceAgentId: null, agentsMuted: false, selectedAgentIds: [] }),
 }))

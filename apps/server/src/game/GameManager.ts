@@ -32,6 +32,15 @@ export class GameManager {
   private speakingVoiceAgents = new Set<string>()
   private pendingAfterSpeech: (() => void) | null = null
 
+  // Ordered speak chain (Marcus → Sophie → Rex)
+  private readonly AGENT_SPEAK_ORDER = ['Marcus', 'Sophie', 'Rex']
+  private agentChainActive = false
+  private agentChainIndex = 0
+  // User-controlled global mute for all AI agents
+  private agentsManuallyMuted = false
+  // Which agents are individually selected to participate in the speak chain
+  private selectedAgentNames: Set<string> = new Set()
+
   // Bot state (from main)
   private botNames: Set<string> = new Set()
   private mafiaVotes: Map<string, string> = new Map()
@@ -155,6 +164,11 @@ export class GameManager {
   }
 
   async addVoiceAgent() {
+    if (this.voiceAgentCount >= 3) {
+      this.log('voiceAgent', 'Maximum 3 AI agents allowed')
+      return { error: 'Maximum 3 AI agents allowed' }
+    }
+
     const pool = GameManager.VOICE_AGENT_POOL
     const agentDef = pool[this.voiceAgentCount % pool.length]
     const { name, persona, voice } = agentDef
@@ -222,6 +236,7 @@ export class GameManager {
           this.speakingVoiceAgents.add(player.name)
         } else {
           this.speakingVoiceAgents.delete(player.name)
+          this.advanceAgentChain(player.name)
           if (this.speakingVoiceAgents.size === 0 && this.pendingAfterSpeech) {
             const fn = this.pendingAfterSpeech
             this.pendingAfterSpeech = null
@@ -233,6 +248,15 @@ export class GameManager {
     )
 
     this.voiceAgents.set(name, agent)
+    this.selectedAgentNames.add(name)
+
+    // Re-run chain so this agent is slotted into the correct position.
+    // Mutes all, then unmutes only the first in order (Marcus → Sophie → Rex).
+    // During night/role_assignment, or when manually muted, the agent stays muted.
+    if (this.state.phase !== 'night' && this.state.phase !== 'role_assignment' && !this.agentsManuallyMuted) {
+      this.startAgentOutputChain()
+    }
+
     this.broadcastEvent({
       type: 'phase_changed',
       phase: this.state.phase,
@@ -243,25 +267,119 @@ export class GameManager {
     return { ok: true, player }
   }
 
-  setActiveVoiceAgent(agentId: string | null) {
-    const agentName = agentId
-      ? this.state.players.find((p) => p.id === agentId)?.name ?? null
-      : null
-
-    this.activeVoiceAgentName = agentName
-
-    // Mute all voice agents except the active one (both input and output)
-    this.voiceAgents.forEach((agent, name) => {
-      const isMuted = name !== agentName
-      agent.setMuteInput(isMuted)
-      agent.setMuteOutput(isMuted)
-    })
-
-    this.log('voiceAgent', `Active agent: ${agentName ?? 'none'}`)
-    this.broadcastEvent({ type: 'agent_mute_changed', activeAgentId: agentId })
-    // Clear any speaking indicator immediately — muted agents must not show as speaking
-    this.broadcastEvent({ type: 'speaker_changed', speakerId: null })
+  setAllVoiceAgentsMuted(muted: boolean) {
+    // Always mute everything first
+    this.voiceAgents.forEach(a => { a.setMuteInput(true); a.setMuteOutput(true) })
+    if (muted) {
+      this.agentChainActive = false
+      this.broadcastEvent({ type: 'speaker_changed', speakerId: null })
+    } else if (!this.agentsManuallyMuted) {
+      // Day/voting: only start chain if user hasn't manually muted agents
+      this.startAgentOutputChain()
+    }
+    this.log('voiceAgent', `All agents ${muted ? 'MUTED' : this.agentsManuallyMuted ? 'skipped (manual mute)' : 'chain-started'}`)
   }
+
+  setAgentsMuted(muted: boolean) {
+    const lockedPhase = this.state.phase === 'night' || this.state.phase === 'role_assignment'
+    if (lockedPhase) return // button is disabled in these phases — ignore
+
+    this.agentsManuallyMuted = muted
+    if (muted) {
+      this.voiceAgents.forEach(a => { a.setMuteInput(true); a.setMuteOutput(true) })
+      this.agentChainActive = false
+      this.broadcastEvent({ type: 'speaker_changed', speakerId: null })
+    } else {
+      // Reset selection to all agents when turning AI back on
+      this.voiceAgents.forEach((_, name) => this.selectedAgentNames.add(name))
+      this.startAgentOutputChain()
+      this.broadcastEvent({ type: 'agent_selection_changed', selectedAgentIds: this.getSelectedAgentIds() })
+    }
+    this.broadcastEvent({ type: 'agents_mute_changed', muted })
+    this.log('voiceAgent', `Agents manually ${muted ? 'MUTED' : 'UNMUTED'}`)
+  }
+
+  setAgentSelected(agentId: string, selected: boolean) {
+    const lockedPhase = this.state.phase === 'night' || this.state.phase === 'role_assignment'
+    if (lockedPhase || this.agentsManuallyMuted) return
+
+    const agentName = this.state.players.find(p => p.id === agentId)?.name
+    if (!agentName || !this.voiceAgents.has(agentName)) return
+
+    if (!selected) {
+      // Must keep at least one agent selected
+      const currentlySelected = this.getOrderedVoiceAgentNames()
+      if (currentlySelected.length <= 1) return
+      this.selectedAgentNames.delete(agentName)
+      // Mute the deselected agent
+      this.voiceAgents.get(agentName)?.setMuteInput(true)
+      this.voiceAgents.get(agentName)?.setMuteOutput(true)
+    } else {
+      this.selectedAgentNames.add(agentName)
+    }
+
+    // Restart chain with updated selection
+    this.startAgentOutputChain()
+    this.broadcastEvent({ type: 'agent_selection_changed', selectedAgentIds: this.getSelectedAgentIds() })
+    this.log('voiceAgent', `Agent ${agentName} ${selected ? 'selected' : 'deselected'}`)
+  }
+
+  private getSelectedAgentIds(): string[] {
+    return [...this.selectedAgentNames]
+      .map(name => this.state.players.find(p => p.name === name)?.id)
+      .filter((id): id is string => !!id)
+  }
+
+  private getOrderedVoiceAgentNames(): string[] {
+    return this.AGENT_SPEAK_ORDER.filter(
+      name => this.voiceAgents.has(name) &&
+        this.selectedAgentNames.has(name) &&
+        this.state.players.find(p => p.name === name && p.status === 'alive')
+    )
+  }
+
+  private startAgentOutputChain() {
+    const ordered = this.getOrderedVoiceAgentNames()
+    // Mute all agents (input + output)
+    this.voiceAgents.forEach(a => { a.setMuteInput(true); a.setMuteOutput(true) })
+    if (ordered.length === 0) {
+      this.agentChainActive = false
+      return
+    }
+    this.agentChainActive = true
+    this.agentChainIndex = 0
+    // Only the first agent is fully active
+    const first = this.voiceAgents.get(ordered[0])
+    if (first) {
+      first.setMuteInput(false)
+      first.setMuteOutput(false)
+    }
+    this.log('chain', `Speak chain started → ${ordered[0]} is active`)
+  }
+
+  private advanceAgentChain(fromName: string) {
+    if (!this.agentChainActive) return
+    const ordered = this.getOrderedVoiceAgentNames()
+    if (ordered[this.agentChainIndex] !== fromName) return
+
+    // Fully mute the agent that just finished
+    const current = this.voiceAgents.get(fromName)
+    if (current) { current.setMuteInput(true); current.setMuteOutput(true) }
+
+    // Move to next (wraps around)
+    this.agentChainIndex = (this.agentChainIndex + 1) % ordered.length
+    const nextName = ordered[this.agentChainIndex]
+    const next = this.voiceAgents.get(nextName)
+    if (next) {
+      next.setMuteInput(false)
+      next.setMuteOutput(false)
+      next.sendContext('[GAME] It\'s your turn to speak. React to the ongoing discussion.')
+    }
+    this.log('chain', `Speak chain: ${fromName} done → ${nextName} active`)
+  }
+
+  // kept for backwards-compat with any outstanding client set_active_agent messages
+  setActiveVoiceAgent(_agentId: string | null) {}
 
   removePlayer(playerId: string) {
     const player = this.state.players.find((p) => p.id === playerId)
@@ -295,6 +413,7 @@ export class GameManager {
     this.log('startGame', `Starting with ${this.state.players.length} players`)
     this.assignRoles()
     this.state.phase = 'role_assignment'
+    this.setAllVoiceAgentsMuted(true)
     this.broadcastEvent({ type: 'game_started', state: this.getPublicState() })
 
     this.state.players.forEach((player) => {
@@ -803,6 +922,7 @@ export class GameManager {
     this.nightActions.clear()
     if (this.mafiaGraceTimer) { clearTimeout(this.mafiaGraceTimer); this.mafiaGraceTimer = null }
     this.state.phase = 'night'
+    this.setAllVoiceAgentsMuted(true)
     this.broadcastEvent({ type: 'phase_changed', phase: 'night', state: this.getPublicState() })
 
     const mafiaPlayers = this.state.players.filter((p) => p.role === 'mafia' && p.status === 'alive')
@@ -1051,6 +1171,7 @@ export class GameManager {
 
     this.state.phase = 'day'
     this.state.day++
+    this.setAllVoiceAgentsMuted(false)
     this.broadcastEvent({ type: 'phase_changed', phase: 'day', state: this.getPublicState() })
 
     const alivePlayers = this.state.players.filter((p) => p.status === 'alive')
@@ -1076,6 +1197,7 @@ export class GameManager {
     if (this.dayTimeout) { clearTimeout(this.dayTimeout); this.dayTimeout = null }
     this.resolving = false
     this.state.phase = 'voting'
+    this.setAllVoiceAgentsMuted(false)
     this.votes.clear()
 
     const alivePlayers = this.state.players.filter((p) => p.status === 'alive')
@@ -1293,7 +1415,12 @@ export class GameManager {
       voiceAgent.setMuteOutput(true)
       voiceAgent.disconnect()
       this.voiceAgents.delete(player.name)
+      this.selectedAgentNames.delete(player.name)
       this.speakingVoiceAgents.delete(player.name)
+      // Restart chain so the next agent in order takes over
+      if (this.agentChainActive && (this.state.phase === 'day' || this.state.phase === 'voting')) {
+        this.startAgentOutputChain()
+      }
       this.broadcastEvent({ type: 'speaker_changed', speakerId: null })
       this.log('eliminate', `Voice agent ${player.name} disconnected`)
     }
@@ -1360,6 +1487,7 @@ export class GameManager {
       ? (this.state.players.find((p) => p.name === this.activeVoiceAgentName)?.id ?? null)
       : null
 
+    const lockedPhase = this.state.phase === 'night' || this.state.phase === 'role_assignment'
     return {
       ...this.state,
       // Fix (from main): reveal role only for dead players — alive players show as 'civilian'
@@ -1369,6 +1497,8 @@ export class GameManager {
       })),
       voiceAgentIds,
       activeVoiceAgentId,
+      agentsMuted: lockedPhase || this.agentsManuallyMuted,
+      selectedAgentIds: this.getSelectedAgentIds(),
     }
   }
 }

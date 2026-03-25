@@ -70,6 +70,8 @@ export function useGameSocket() {
             setPlayerId(msg.playerId)
             setGameState(msg.state)
             useGameStore.getState().setActiveVoiceAgent(msg.state.activeVoiceAgentId ?? null)
+            useGameStore.getState().setAgentsMuted(msg.state.agentsMuted ?? false)
+            useGameStore.getState().setSelectedAgentIds(msg.state.selectedAgentIds ?? [])
             console.log('%c[WS] Joined as', 'color: #4ade80', msg.playerId, 'players:', msg.state.players.map((p: any) => p.name))
             if (msg.fishjamToken) {
               setFishjamToken(msg.fishjamToken)
@@ -77,12 +79,16 @@ export function useGameSocket() {
             break
           case 'game_started':
             setGameState(msg.state)
+            useGameStore.getState().setAgentsMuted(msg.state.agentsMuted ?? false)
+            useGameStore.getState().setSelectedAgentIds(msg.state.selectedAgentIds ?? [])
             break
           case 'role_assigned':
             setMyRole(msg.role)
             break
           case 'phase_changed': {
             setGameState(msg.state)
+            useGameStore.getState().setAgentsMuted(msg.state.agentsMuted ?? false)
+            useGameStore.getState().setSelectedAgentIds(msg.state.selectedAgentIds ?? [])
             if (msg.phase === 'voting') {
               clearVotes()
             }
@@ -200,6 +206,15 @@ export function useGameSocket() {
           case 'agent_mute_changed': {
             useGameStore.getState().setActiveVoiceAgent(msg.activeAgentId)
             console.log(`%c[Agent] Active voice agent: ${msg.activeAgentId ?? 'none'}`, 'color: #a78bfa; font-weight: bold')
+            break
+          }
+          case 'agents_mute_changed': {
+            useGameStore.getState().setAgentsMuted(msg.muted)
+            console.log(`%c[Agent] All agents ${msg.muted ? 'MUTED' : 'UNMUTED'}`, 'color: #a78bfa; font-weight: bold')
+            break
+          }
+          case 'agent_selection_changed': {
+            useGameStore.getState().setSelectedAgentIds(msg.selectedAgentIds)
             break
           }
           case 'game_over':

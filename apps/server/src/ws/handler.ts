@@ -147,6 +147,22 @@ export async function handleClientEvent(
       break
     }
 
+    case 'set_agents_muted': {
+      const game = findGameByPlayer(ws.data.playerId)
+      if (game) {
+        game.setAgentsMuted(event.muted)
+      }
+      break
+    }
+
+    case 'set_agent_selected': {
+      const game = findGameByPlayer(ws.data.playerId)
+      if (game) {
+        game.setAgentSelected(event.agentId, event.selected)
+      }
+      break
+    }
+
     default: {
       ws.send(JSON.stringify({ type: 'error', message: `Unknown event type: ${(event as any).type}` }))
       break

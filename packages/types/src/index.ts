@@ -28,6 +28,8 @@ export interface GameState {
   currentSpeakerId: string | null
   voiceAgentIds: string[]
   activeVoiceAgentId: string | null
+  agentsMuted: boolean
+  selectedAgentIds: string[]
 }
 
 // WebSocket Events — Server → Client
@@ -48,6 +50,8 @@ export type ServerEvent =
   | { type: 'behavioral_note'; playerName: string; note: string }
   | { type: 'bot_speech'; playerName: string; playerId: string; message: string }
   | { type: 'agent_mute_changed'; activeAgentId: string | null }
+  | { type: 'agents_mute_changed'; muted: boolean }
+  | { type: 'agent_selection_changed'; selectedAgentIds: string[] }
   | { type: 'error'; message: string }
 
 // WebSocket Events — Client → Server
@@ -61,3 +65,5 @@ export type ClientEvent =
   | { type: 'face_metrics'; stress: number; surprise: number; happiness: number; lookingAway: boolean }
   | { type: 'add_voice_agent' }
   | { type: 'set_active_agent'; agentId: string | null }
+  | { type: 'set_agents_muted'; muted: boolean }
+  | { type: 'set_agent_selected'; agentId: string; selected: boolean }

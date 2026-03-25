@@ -79,14 +79,9 @@ TOOLS USAGE:
             }
         })
 
-        // Fix (from main): use this.voice instead of hardcoded 'Puck'
-        // skipVAD=false: use floor-control VAD for real-time conversation via SFU
-        await this.bridge.start(roomId, prompt, tools, this.voice, false)
-
-        // Fix (from main): start fully muted — GameManager.setActiveVoiceAgent
-        // explicitly unmutes when this agent's turn comes
+        // Start fully muted — GameManager controls unmuting via the speak chain
+        await this.bridge.start(roomId, prompt, tools, this.voice, true)
         this.bridge.setMuteInput(true)
-        this.bridge.setMuteOutput(true)
 
         this.isConnected = true
         console.log(`[VoiceAgent:${this.name}] Joined as ${role} with ${tools.length} tools.`)

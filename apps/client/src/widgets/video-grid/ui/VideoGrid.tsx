@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import type { Player, ClientEvent } from '@mafia-ai/types'
+import type { Player } from '@mafia-ai/types'
 import type { PeerWithTracks } from '@fishjam-cloud/react-client'
 import { VideoTile } from '@/entities/player'
 import { useGameStore } from '@/entities/game'
@@ -32,27 +32,15 @@ interface VideoGridProps {
   playerName: string | null
   localPeer: Peer | null
   remotePeers: Peer[]
-  send: (event: ClientEvent) => void
 }
 
-export function VideoGrid({ players, playerId, playerName, localPeer, remotePeers, send }: VideoGridProps) {
+export function VideoGrid({ players, playerId, playerName, localPeer, remotePeers }: VideoGridProps) {
   const suspicions = useGameStore((s) => s.suspicions)
   const currentSpeakerId = useGameStore((s) => s.currentSpeakerId)
   const playerTranscripts = useGameStore((s) => s.playerTranscripts)
-  const gameState = useGameStore((s) => s.gameState)
-  const activeVoiceAgentId = useGameStore((s) => s.activeVoiceAgentId)
-
-  const voiceAgentIds = gameState?.voiceAgentIds ?? []
-
-  function handleToggleMute(agentId: string) {
-    // If already active (unmuted), mute it; otherwise unmute it (and mute all others server-side)
-    const newActiveId = activeVoiceAgentId === agentId ? null : agentId
-    send({ type: 'set_active_agent', agentId: newActiveId })
-  }
 
   // Build a map: playerName → Fishjam stream
   const streamByName = new Map<string, MediaStream | null>()
-  const audioByName = new Map<string, MediaStream | null>()
 
   if (localPeer && playerName) {
     streamByName.set(playerName, localPeer.cameraTrack?.stream ?? null)
@@ -61,9 +49,6 @@ export function VideoGrid({ players, playerId, playerName, localPeer, remotePeer
     const name = getPeerName(peer)
     if (name) {
       streamByName.set(name, peer.cameraTrack?.stream ?? null)
-      if (peer.microphoneTrack?.stream) {
-        audioByName.set(name, peer.microphoneTrack.stream)
-      }
     }
   }
 
@@ -87,8 +72,6 @@ export function VideoGrid({ players, playerId, playerName, localPeer, remotePeer
       {players.map((player) => {
         const isYou = player.id === playerId
         const stream = streamByName.get(player.name) ?? null
-        const isAgent = voiceAgentIds.includes(player.id)
-        const isAgentMuted = activeVoiceAgentId !== player.id
 
         return (
           <div key={player.id}>
@@ -100,9 +83,6 @@ export function VideoGrid({ players, playerId, playerName, localPeer, remotePeer
               suspicion={suspicions[player.id]}
               isSpeaking={player.id === currentSpeakerId}
               transcript={playerTranscripts[player.name]}
-              isAgent={isAgent}
-              isAgentMuted={isAgentMuted}
-              onToggleMute={() => handleToggleMute(player.id)}
             />
           </div>
         )

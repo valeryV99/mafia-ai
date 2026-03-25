@@ -26,6 +26,8 @@ export function RoomPage() {
   const { playerId, playerName, myRole, gameState, fishjamToken, lastTranscript } = useGameStore()
   const isNarratorSpeaking = useGameStore((s) => s.isNarratorSpeaking)
   const investigationResult = useGameStore((s) => s.investigationResult)
+  const agentsMuted = useGameStore((s) => s.agentsMuted)
+  const selectedAgentIds = useGameStore((s) => s.selectedAgentIds)
   const { send, wsRef, setOnBinary } = useGameSocket()
   const { playAudio } = useAudioPipeline(wsRef)
   const { metrics: faceMetrics, setVideoElement, startAnalysis, stopAnalysis, onMetrics } = useFaceAnalysis()
@@ -221,18 +223,64 @@ export function RoomPage() {
                   </div>
                 )}
               </div>
-              <button
-                onClick={() => !isNarratorSpeaking && toggleMicrophoneMute()}
-                className={`flex items-center gap-2 px-4 py-2 rounded-full font-bold text-xs transition-all duration-200 ${
-                  isNarratorSpeaking
-                    ? 'bg-indigo-600/80 text-white cursor-not-allowed'
-                    : isMicrophoneMuted
-                      ? 'bg-red-600/80 hover:bg-red-600 text-white'
-                      : 'bg-green-600/80 hover:bg-green-600 text-white animate-pulse'
-                }`}
-              >
-                {isNarratorSpeaking ? 'NARRATOR' : isMicrophoneMuted ? 'MIC OFF' : 'LIVE'}
-              </button>
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                {gameState.voiceAgentIds.length > 0 && (() => {
+                  const locked = gameState.phase === 'night' || gameState.phase === 'role_assignment'
+                  const agentPlayers = gameState.players.filter(p => gameState.voiceAgentIds.includes(p.id))
+                  return (
+                    <>
+                      <button
+                        disabled={locked}
+                        onClick={() => !locked && send({ type: 'set_agents_muted', muted: !agentsMuted })}
+                        className={`px-3 py-1.5 rounded-full font-bold text-xs transition-all duration-200 ${
+                          locked
+                            ? 'bg-gray-700/80 text-gray-400 cursor-not-allowed'
+                            : agentsMuted
+                              ? 'bg-red-600/80 hover:bg-red-600 text-white'
+                              : 'bg-purple-600/80 hover:bg-purple-600 text-white'
+                        }`}
+                        title={locked ? 'AI agents are always muted in this phase' : agentsMuted ? 'Unmute AI agents' : 'Mute AI agents'}
+                      >
+                        {locked ? 'AI MUTED' : agentsMuted ? 'AI OFF' : 'AI ON'}
+                      </button>
+                      {agentPlayers.map(agent => {
+                        const isSelected = selectedAgentIds.includes(agent.id)
+                        const isOnlyOne = selectedAgentIds.length <= 1 && isSelected
+                        const disabled = locked || agentsMuted || isOnlyOne
+                        return (
+                          <button
+                            key={agent.id}
+                            disabled={disabled}
+                            onClick={() => !disabled && send({ type: 'set_agent_selected', agentId: agent.id, selected: !isSelected })}
+                            className={`px-3 py-1.5 rounded-full font-bold text-xs transition-all duration-200 ${
+                              (locked || agentsMuted)
+                                ? 'bg-gray-700/60 text-gray-500 cursor-not-allowed'
+                                : isSelected
+                                  ? 'bg-emerald-600/80 hover:bg-emerald-600 text-white cursor-not-allowed'
+                                  : 'bg-gray-600/80 hover:bg-gray-500/80 text-gray-300'
+                            }`}
+                            title={isOnlyOne ? 'At least one agent must be active' : isSelected ? `Mute ${agent.name}` : `Unmute ${agent.name}`}
+                          >
+                            {agent.name}
+                          </button>
+                        )
+                      })}
+                    </>
+                  )
+                })()}
+                <button
+                  onClick={() => !isNarratorSpeaking && toggleMicrophoneMute()}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-full font-bold text-xs transition-all duration-200 ${
+                    isNarratorSpeaking
+                      ? 'bg-indigo-600/80 text-white cursor-not-allowed'
+                      : isMicrophoneMuted
+                        ? 'bg-red-600/80 hover:bg-red-600 text-white'
+                        : 'bg-green-600/80 hover:bg-green-600 text-white animate-pulse'
+                  }`}
+                >
+                  {isNarratorSpeaking ? 'NARRATOR' : isMicrophoneMuted ? 'MIC OFF' : 'LIVE'}
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -253,7 +301,6 @@ export function RoomPage() {
           playerName={playerName}
           localPeer={localPeer}
           remotePeers={remotePeers}
-          send={send}
         />
 
         {/* AI Analysis panel */}
@@ -286,17 +333,56 @@ export function RoomPage() {
               const agentCount = gameState.voiceAgentIds?.length ?? 0
               const atLimit = agentCount >= 3
               return (
-                <button
-                  onClick={() => send({ type: 'add_voice_agent' })}
-                  disabled={atLimit}
-                  className={`px-6 py-2.5 rounded-lg font-bold transition-colors ${
-                    atLimit
-                      ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
-                      : 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                  }`}
-                >
-                  {atLimit ? 'AI Agent Limit Reached (3/3)' : `+ Add Voice Agent (${agentCount}/3)`}
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => send({ type: 'add_voice_agent' })}
+                    disabled={atLimit}
+                    className={`px-6 py-2.5 rounded-lg font-bold transition-colors ${
+                      atLimit
+                        ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                        : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                    }`}
+                  >
+                    {atLimit ? 'AI Agent Limit Reached (3/3)' : `+ Add Voice Agent (${agentCount}/3)`}
+                  </button>
+                  {agentCount > 0 && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        onClick={() => send({ type: 'set_agents_muted', muted: !agentsMuted })}
+                        className={`px-4 py-2 rounded-lg font-bold text-xs transition-colors ${
+                          agentsMuted
+                            ? 'bg-red-600/80 hover:bg-red-600 text-white'
+                            : 'bg-purple-600/80 hover:bg-purple-600 text-white'
+                        }`}
+                        title={agentsMuted ? 'Unmute AI agents' : 'Mute AI agents'}
+                      >
+                        {agentsMuted ? 'AI OFF' : 'AI ON'}
+                      </button>
+                      {gameState.players.filter(p => gameState.voiceAgentIds.includes(p.id)).map(agent => {
+                        const isSelected = selectedAgentIds.includes(agent.id)
+                        const isOnlyOne = selectedAgentIds.length <= 1 && isSelected
+                        const disabled = agentsMuted || isOnlyOne
+                        return (
+                          <button
+                            key={agent.id}
+                            disabled={disabled}
+                            onClick={() => !disabled && send({ type: 'set_agent_selected', agentId: agent.id, selected: !isSelected })}
+                            className={`px-3 py-2 rounded-lg font-bold text-xs transition-colors ${
+                              agentsMuted
+                                ? 'bg-gray-700/60 text-gray-500 cursor-not-allowed'
+                                : isSelected
+                                  ? 'bg-emerald-600/80 hover:bg-emerald-600 text-white cursor-not-allowed'
+                                  : 'bg-gray-600/80 hover:bg-gray-500/80 text-gray-300'
+                            }`}
+                            title={isOnlyOne ? 'At least one agent must be active' : isSelected ? `Mute ${agent.name}` : `Unmute ${agent.name}`}
+                          >
+                            {agent.name}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
               )
             })()}
             <StartButton
