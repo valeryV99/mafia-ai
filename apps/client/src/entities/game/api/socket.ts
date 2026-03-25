@@ -102,13 +102,13 @@ export function useGameSocket() {
               narratorFreezeTime.current = Date.now()
               useGameStore.getState().setNarratorSpeaking(true)
               console.log(`%c[Timer] FROZEN → ${msg.phase} at t=0`, 'color: #818cf8; font-weight: bold')
-              // Safety: unfreeze if narrator never fires turnComplete within 30s
+              // Safety: unfreeze if narrator never fires turnComplete within 12s
               narratorSafetyTimer.current = setTimeout(() => {
                 if (useGameStore.getState().isNarratorSpeaking) {
                   useGameStore.getState().setNarratorSpeaking(false)
                   console.log(`%c[Timer] Safety reset (phase: ${msg.phase})`, 'color: #ef4444; font-weight: bold')
                 }
-              }, 30_000)
+              }, 12_000)
             }
             break
           }
