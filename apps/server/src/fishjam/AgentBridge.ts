@@ -34,11 +34,24 @@ export class AgentBridge {
   private narratorSpeaking = false
   private seenPeerIds: Set<string> = new Set()
 
+  // Gemini session config — stored for reconnection
+  private sessionConfig: any = null
+  private sessionSystemPrompt: string = ''
+  private intentionalDisconnect = false
+  private reconnectAttempts = 0
+  private readonly MAX_RECONNECT_ATTEMPTS = 3
+  private readonly RECONNECT_DELAY_MS = 2000
+
   // Narrator timing & phase transition (from main)
   private narratorStartedAt: number = 0
   private pendingPhaseTransition: (() => void) | null = null
   private pendingPhaseTimeout: ReturnType<typeof setTimeout> | null = null
   private readonly PENDING_PHASE_TIMEOUT_MS = 30000
+  // Synthetic turnComplete: if no audio arrives for this many ms, assume the turn is done
+  private audioSilenceTimer: ReturnType<typeof setTimeout> | null = null
+  private readonly AUDIO_SILENCE_TURN_COMPLETE_MS = 3000
+  // Queue for sendText() calls that arrive while narrator is mid-speech
+  private pendingTextQueue: string[] = []
 
   // Fix: log is stored as an instance method via makeLog
   private log: (tag: string, ...args: unknown[]) => void
@@ -85,6 +98,11 @@ export class AgentBridge {
       sessionConfig.tools = [{ functionDeclarations: tools }]
     }
 
+    // Store for reconnection
+    this.sessionConfig = sessionConfig
+    this.sessionSystemPrompt = systemPrompt
+    this.intentionalDisconnect = false
+
     this.geminiSession = await this.genAi.live.connect({
       model: 'models/gemini-2.5-flash-native-audio-preview-12-2025',
       config: {
@@ -94,10 +112,22 @@ export class AgentBridge {
         outputAudioTranscription: {},
       },
       callbacks: {
-        onopen: () => this.log('gemini', `Session OPENED for ${this.name}`),
+        onopen: () => {
+          this.log('gemini', `Session OPENED for ${this.name}`)
+          this.reconnectAttempts = 0
+        },
         onclose: (e: any) => {
-          this.log('gemini', `Session CLOSED for ${this.name}: code=${e?.code || 'unknown'} reason=${e?.reason || 'none'}`)
-          this.callbacks.onSessionClose?.()
+          const code = e?.code || 'unknown'
+          const reason = e?.reason || 'none'
+          this.log('gemini', `Session CLOSED for ${this.name}: code=${code} reason=${reason}`)
+          this.geminiSession = null
+          if (!this.intentionalDisconnect && this.reconnectAttempts < this.MAX_RECONNECT_ATTEMPTS) {
+            this.reconnectAttempts++
+            this.log('gemini', `Reconnecting Gemini session (attempt ${this.reconnectAttempts}/${this.MAX_RECONNECT_ATTEMPTS}) in ${this.RECONNECT_DELAY_MS}ms...`)
+            setTimeout(() => this.reconnectGeminiSession(), this.RECONNECT_DELAY_MS)
+          } else {
+            this.callbacks.onSessionClose?.()
+          }
         },
         onerror: (e: any) => this.log('gemini', `Session ERROR for ${this.name}:`, e?.message || e),
         onmessage: (msg: any) => this.handleGeminiMessage(msg),
@@ -128,7 +158,8 @@ export class AgentBridge {
       }
 
       if (skipVAD) {
-        // Native VAD mode: forward all audio directly to Gemini, let it decide when to respond
+        // Native VAD mode: only forward audio from allowed peers, let Gemini decide when to respond
+        if (this.allowedPeerIds !== null && !this.allowedPeerIds.has(peerId)) return
         this.geminiSession?.sendRealtimeInput({
           audio: {
             mimeType: GeminiIntegration.inputMimeType,
@@ -152,11 +183,22 @@ export class AgentBridge {
       if (this.activeSpeakerId === null) {
         if (this.hasVoice(data)) {
           this.activeSpeakerId = peerId
+          this.log('vad', `[${this.name}] Floor acquired by peer ${peerId.slice(0, 8)} — audio will flow to Gemini (narratorSpeaking=${this.narratorSpeaking})`)
         }
       }
 
       if (this.activeSpeakerId === peerId) {
-        if (this.narratorSpeaking) return
+        if (this.narratorSpeaking) {
+          if (!this._audioBlockedLogged) {
+            this.log('audio', `[${this.name}] BLOCKED player audio (narratorSpeaking) from peer ${peerId.slice(0, 8)}`)
+            this._audioBlockedLogged = true
+          }
+          return
+        }
+        if (this._audioBlockedLogged) {
+          this.log('audio', `[${this.name}] Audio UNBLOCKED — forwarding to Gemini`)
+          this._audioBlockedLogged = false
+        }
 
         this.geminiSession?.sendRealtimeInput({
           audio: { mimeType: GeminiIntegration.inputMimeType, data: Buffer.from(data).toString('base64') },
@@ -177,6 +219,7 @@ export class AgentBridge {
 
   private audioChunkCount = 0
   private lastAudioLogAt = 0
+  private _audioBlockedLogged = false
 
   private handleGeminiMessage(msg: any) {
     const parts = msg.serverContent?.modelTurn?.parts
@@ -195,6 +238,16 @@ export class AgentBridge {
             this.agent.sendData(this.agentTrackId as any, pcmData)
           }
           this.callbacks.onGeminiAudio?.(pcmData)
+          // Reset synthetic turnComplete timer — audio is still flowing
+          if (this.audioSilenceTimer) clearTimeout(this.audioSilenceTimer)
+          this.audioSilenceTimer = setTimeout(() => {
+            this.audioSilenceTimer = null
+            if (this.narratorSpeaking) {
+              const duration = Date.now() - this.narratorStartedAt
+              this.log('turnComplete', `[${this.name}] SYNTHETIC turnComplete (audio silence ${this.AUDIO_SILENCE_TURN_COMPLETE_MS}ms after last chunk, spoke ${(duration / 1000).toFixed(1)}s)`)
+              this.onTurnDone()
+            }
+          }, this.AUDIO_SILENCE_TURN_COMPLETE_MS)
         } else if (part.text !== undefined) {
           // text part — expected for native audio transcript fallback, skip silently
         } else {
@@ -238,11 +291,11 @@ export class AgentBridge {
       const text = msg.serverContent.outputTranscription.text
       if (!this.narratorSpeaking) {
         this.narratorStartedAt = Date.now()
-        this.log('narrator', 'SPEAKING start')
+        this.log('narrator', `[${this.name}] SPEAKING — first chunk: "${text.slice(0, 60)}"`)
+        this._audioBlockedLogged = false
       }
       this.narratorSpeaking = true
-      this.log('said', `"${text}"`)
-      // Fix (from main): only fire transcript callback when output is not muted
+      // Only fire transcript callback when output is not muted
       if (!this.muteOutput) {
         this.callbacks.onTranscript?.('gemini', text)
       }
@@ -252,17 +305,33 @@ export class AgentBridge {
     // the Gemini SDK emits a top-level turnComplete (older SDK behaviour)
     const isTurnComplete = msg.serverContent?.turnComplete || (msg as any).turnComplete
     if (isTurnComplete) {
-      const duration = Date.now() - this.narratorStartedAt
-      this.log('turnComplete', `[${this.name}] turnComplete received after ${(duration / 1000).toFixed(1)}s, narratorSpeaking=${this.narratorSpeaking}, hasPendingTransition=${!!this.pendingPhaseTransition}`)
-      this.narratorSpeaking = false
-      this.callbacks.onTurnComplete?.()
-      if (this.pendingPhaseTransition) {
-        if (this.pendingPhaseTimeout) clearTimeout(this.pendingPhaseTimeout)
-        const fn = this.pendingPhaseTransition
-        this.pendingPhaseTransition = null
-        this.log('turnComplete', `[${this.name}] Firing pending phase transition`)
-        fn()
+      // Cancel synthetic timer — real turnComplete arrived
+      if (this.audioSilenceTimer) { clearTimeout(this.audioSilenceTimer); this.audioSilenceTimer = null }
+      if (!this.narratorSpeaking) {
+        // Synthetic already fired — skip to avoid double-firing
+        return
       }
+      const duration = Date.now() - this.narratorStartedAt
+      this.log('turnComplete', `[${this.name}] turnComplete received after ${(duration / 1000).toFixed(1)}s, hasPendingTransition=${!!this.pendingPhaseTransition}`)
+      this.onTurnDone()
+    }
+  }
+
+  private onTurnDone() {
+    this.narratorSpeaking = false
+    this.callbacks.onTurnComplete?.()
+    if (this.pendingPhaseTransition) {
+      if (this.pendingPhaseTimeout) clearTimeout(this.pendingPhaseTimeout)
+      const fn = this.pendingPhaseTransition
+      this.pendingPhaseTransition = null
+      this.log('turnComplete', `[${this.name}] Firing pending phase transition`)
+      fn()
+    }
+    // Flush any sendText() calls that were queued while narrator was speaking
+    if (this.pendingTextQueue.length > 0) {
+      const next = this.pendingTextQueue.shift()!
+      this.log('sendText', `[${this.name}] Flushing queued message: "${next.slice(0, 80)}" (${this.pendingTextQueue.length} remaining)`)
+      this._sendTextNow(next)
     }
   }
 
@@ -303,11 +372,20 @@ export class AgentBridge {
 
   sendText(message: string) {
     const sessionAlive = !!this.geminiSession
-    this.log('sendText', `[${this.name}] sessionAlive=${sessionAlive} muteIn=${this.muteInput} muteOut=${this.muteOutput} msg="${message.slice(0, 120)}"`)
+    this.log('sendText', `[${this.name}] sessionAlive=${sessionAlive} narratorSpeaking=${this.narratorSpeaking} msg="${message.slice(0, 120)}"`)
     if (!sessionAlive) {
       this.log('sendText', `[${this.name}] WARNING: No Gemini session — message lost!`)
       return
     }
+    if (this.narratorSpeaking) {
+      this.log('sendText', `[${this.name}] Narrator mid-speech — queuing message (queue size: ${this.pendingTextQueue.length + 1})`)
+      this.pendingTextQueue.push(message)
+      return
+    }
+    this._sendTextNow(message)
+  }
+
+  private _sendTextNow(message: string) {
     try {
       this.geminiSession?.sendClientContent({
         turns: [{ role: 'user', parts: [{ text: message }] }],
@@ -318,22 +396,9 @@ export class AgentBridge {
     }
   }
 
-  // Inject context silently — model receives the info but does NOT generate a response
+  // Inject context — routes through sendText queue (turnComplete:false caused 1008 disconnects)
   sendSilentContext(message: string) {
-    const sessionAlive = !!this.geminiSession
-    this.log('sendSilentContext', `[${this.name}] sessionAlive=${sessionAlive} msg="${message.slice(0, 120)}"`)
-    if (!sessionAlive) {
-      this.log('sendSilentContext', `[${this.name}] WARNING: No Gemini session — context lost!`)
-      return
-    }
-    try {
-      this.geminiSession?.sendClientContent({
-        turns: [{ role: 'user', parts: [{ text: message }] }],
-        turnComplete: false,
-      })
-    } catch (err) {
-      this.log('sendSilentContext', `[${this.name}] ERROR:`, err)
-    }
+    this.sendText(message)
   }
 
   setMuteInput(muted: boolean) {
@@ -367,14 +432,63 @@ export class AgentBridge {
     this.callbacks = { ...this.callbacks, ...callbacks }
   }
 
+  private async reconnectGeminiSession() {
+    if (this.intentionalDisconnect || !this.sessionConfig) return
+    this.log('gemini', `Attempting Gemini session reconnect...`)
+    try {
+      this.geminiSession = await this.genAi.live.connect({
+        model: 'models/gemini-2.5-flash-native-audio-preview-12-2025',
+        config: {
+          ...this.sessionConfig,
+          systemInstruction: this.sessionSystemPrompt,
+          inputAudioTranscription: {},
+          outputAudioTranscription: {},
+        },
+        callbacks: {
+          onopen: () => {
+            this.log('gemini', `Session RECONNECTED for ${this.name} (attempt ${this.reconnectAttempts})`)
+            this.reconnectAttempts = 0
+            // Reset narrator state so the game can continue
+            this.narratorSpeaking = false
+            this.pendingTextQueue = []
+          },
+          onclose: (e: any) => {
+            const code = e?.code || 'unknown'
+            this.log('gemini', `Reconnected session CLOSED: code=${code}`)
+            this.geminiSession = null
+            if (!this.intentionalDisconnect && this.reconnectAttempts < this.MAX_RECONNECT_ATTEMPTS) {
+              this.reconnectAttempts++
+              setTimeout(() => this.reconnectGeminiSession(), this.RECONNECT_DELAY_MS)
+            } else {
+              this.callbacks.onSessionClose?.()
+            }
+          },
+          onerror: (e: any) => this.log('gemini', `Reconnected session ERROR:`, e?.message || e),
+          onmessage: (msg: any) => this.handleGeminiMessage(msg),
+        },
+      })
+    } catch (err) {
+      this.log('gemini', `Reconnect failed:`, err)
+      if (this.reconnectAttempts < this.MAX_RECONNECT_ATTEMPTS) {
+        this.reconnectAttempts++
+        setTimeout(() => this.reconnectGeminiSession(), this.RECONNECT_DELAY_MS)
+      } else {
+        this.callbacks.onSessionClose?.()
+      }
+    }
+  }
+
   disconnect() {
     this.log('disconnect', 'Shutting down')
+    this.intentionalDisconnect = true
     this.geminiSession?.close()
     this.geminiSession = null
     this.agent?.disconnect()
     this.agent = null
     this.agentTrackId = null
     if (this.silenceTimeout) clearTimeout(this.silenceTimeout)
+    if (this.audioSilenceTimer) { clearTimeout(this.audioSilenceTimer); this.audioSilenceTimer = null }
     if (this.pendingPhaseTimeout) clearTimeout(this.pendingPhaseTimeout)
+    this.pendingTextQueue = []
   }
 }

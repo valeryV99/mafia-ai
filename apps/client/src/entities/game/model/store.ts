@@ -20,6 +20,8 @@ interface GameStore {
   activeVoiceAgentId: string | null
   agentsMuted: boolean
   selectedAgentIds: string[]
+  nightActionWindowOpen: boolean
+  nightActionSubmitted: boolean
 
   setRoomId: (id: string) => void
   setPlayerId: (id: string) => void
@@ -43,6 +45,8 @@ interface GameStore {
   setActiveVoiceAgent: (id: string | null) => void
   setAgentsMuted: (muted: boolean) => void
   setSelectedAgentIds: (ids: string[]) => void
+  setNightActionWindowOpen: (open: boolean) => void
+  setNightActionSubmitted: (v: boolean) => void
   reset: () => void
 }
 
@@ -65,6 +69,8 @@ export const useGameStore = create<GameStore>((set) => ({
   activeVoiceAgentId: null,
   agentsMuted: false,
   selectedAgentIds: [],
+  nightActionWindowOpen: false,
+  nightActionSubmitted: false,
 
   setRoomId: (roomId) => set({ roomId }),
   setPlayerId: (playerId) => set({ playerId }),
@@ -102,5 +108,7 @@ export const useGameStore = create<GameStore>((set) => ({
   setActiveVoiceAgent: (activeVoiceAgentId) => set({ activeVoiceAgentId }),
   setAgentsMuted: (agentsMuted) => set({ agentsMuted }),
   setSelectedAgentIds: (selectedAgentIds) => set({ selectedAgentIds }),
-  reset: () => set({ roomId: null, playerId: null, playerName: null, myRole: null, gameState: null, fishjamToken: null, lastTranscript: null, playerTranscripts: {}, votes: {}, suspicions: {}, behavioralNotes: [], faceMetrics: null, currentSpeakerId: null, isNarratorSpeaking: false, investigationResult: null, activeVoiceAgentId: null, agentsMuted: false, selectedAgentIds: [] }),
+  setNightActionWindowOpen: (nightActionWindowOpen) => set({ nightActionWindowOpen }),
+  setNightActionSubmitted: (nightActionSubmitted) => set({ nightActionSubmitted }),
+  reset: () => set({ roomId: null, playerId: null, playerName: null, myRole: null, gameState: null, fishjamToken: null, lastTranscript: null, playerTranscripts: {}, votes: {}, suspicions: {}, behavioralNotes: [], faceMetrics: null, currentSpeakerId: null, isNarratorSpeaking: false, investigationResult: null, activeVoiceAgentId: null, agentsMuted: false, selectedAgentIds: [], nightActionWindowOpen: false, nightActionSubmitted: false }),
 }))

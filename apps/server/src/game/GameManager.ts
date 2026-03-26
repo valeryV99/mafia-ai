@@ -49,8 +49,12 @@ export class GameManager {
   // Fix: nightActions used in main's logNightProgress / handleVoiceFallback
   private nightActions: Map<string, string> = new Map()
 
+  // Night action windows — tracks which human players have their voice window open
+  private nightActionWindowPlayers: Set<string> = new Set()
+
   // Timing helpers (from main)
   private dayStartedAt: number = 0
+  private silenceTimer: ReturnType<typeof setTimeout> | null = null
   private voiceFallbackTimeout: ReturnType<typeof setTimeout> | null = null
   private geminiTranscriptBuffer = ''
   private geminiTranscriptTimer: ReturnType<typeof setTimeout> | null = null
@@ -270,14 +274,12 @@ export class GameManager {
   setAllVoiceAgentsMuted(muted: boolean) {
     // Always mute everything first
     this.voiceAgents.forEach(a => { a.setMuteInput(true); a.setMuteOutput(true) })
+    this.agentChainActive = false
     if (muted) {
-      this.agentChainActive = false
       this.broadcastEvent({ type: 'speaker_changed', speakerId: null })
-    } else if (!this.agentsManuallyMuted) {
-      // Day/voting: only start chain if user hasn't manually muted agents
-      this.startAgentOutputChain()
     }
-    this.log('voiceAgent', `All agents ${muted ? 'MUTED' : this.agentsManuallyMuted ? 'skipped (manual mute)' : 'chain-started'}`)
+    // When unmuting (day/voting): agents stay muted and only respond when GM calls address_agent
+    this.log('voiceAgent', `All agents ${muted ? 'MUTED' : 'ready (address-triggered)'}`)
   }
 
   setAgentsMuted(muted: boolean) {
@@ -291,12 +293,12 @@ export class GameManager {
       this.broadcastEvent({ type: 'speaker_changed', speakerId: null })
     } else {
       // Reset selection to all agents when turning AI back on
+      // Agents stay muted — they respond only when GM calls address_agent
       this.voiceAgents.forEach((_, name) => this.selectedAgentNames.add(name))
-      this.startAgentOutputChain()
       this.broadcastEvent({ type: 'agent_selection_changed', selectedAgentIds: this.getSelectedAgentIds() })
     }
     this.broadcastEvent({ type: 'agents_mute_changed', muted })
-    this.log('voiceAgent', `Agents manually ${muted ? 'MUTED' : 'UNMUTED'}`)
+    this.log('voiceAgent', `Agents manually ${muted ? 'MUTED' : 'UNMUTED (address-triggered)'}`)
   }
 
   setAgentSelected(agentId: string, selected: boolean) {
@@ -308,42 +310,12 @@ export class GameManager {
 
     if (!selected) {
       // Must keep at least one agent selected
-      const currentlySelected = this.getOrderedVoiceAgentNames()
-      if (currentlySelected.length <= 1) return
-
-      // Determine if this agent is the active speaker BEFORE modifying selection
-      const currentActiveName = this.agentChainActive ? currentlySelected[this.agentChainIndex] : null
-      const wasActiveSpeaker = currentActiveName === agentName
-
+      if (this.getOrderedVoiceAgentNames().length <= 1) return
       this.selectedAgentNames.delete(agentName)
       this.voiceAgents.get(agentName)?.setMuteInput(true)
       this.voiceAgents.get(agentName)?.setMuteOutput(true)
-
-      if (wasActiveSpeaker) {
-        // Active speaker was muted — advance to next in the updated ordered list
-        const newOrdered = this.getOrderedVoiceAgentNames()
-        if (newOrdered.length > 0) {
-          this.agentChainIndex = this.agentChainIndex % newOrdered.length
-          const nextName = newOrdered[this.agentChainIndex]
-          const next = this.voiceAgents.get(nextName)
-          if (next) {
-            next.setMuteInput(false)
-            next.setMuteOutput(false)
-            next.sendContext('[GAME] It\'s your turn to speak. React to the ongoing discussion.')
-          }
-          this.log('chain', `Deselected active speaker ${agentName} → ${nextName} active`)
-        } else {
-          this.agentChainActive = false
-        }
-      }
-      // If not the active speaker, the chain continues uninterrupted
     } else {
       this.selectedAgentNames.add(agentName)
-      if (!this.agentChainActive) {
-        // Chain not running yet — start it so the new agent can participate
-        this.startAgentOutputChain()
-      }
-      // Chain already running — current speaker keeps speaking; new agent joins on next advance
     }
 
     this.broadcastEvent({ type: 'agent_selection_changed', selectedAgentIds: this.getSelectedAgentIds() })
@@ -384,24 +356,16 @@ export class GameManager {
   }
 
   private advanceAgentChain(fromName: string) {
-    if (!this.agentChainActive) return
-    const ordered = this.getOrderedVoiceAgentNames()
-    if (ordered[this.agentChainIndex] !== fromName) return
-
-    // Fully mute the agent that just finished
-    const current = this.voiceAgents.get(fromName)
-    if (current) { current.setMuteInput(true); current.setMuteOutput(true) }
-
-    // Move to next (wraps around)
-    this.agentChainIndex = (this.agentChainIndex + 1) % ordered.length
-    const nextName = ordered[this.agentChainIndex]
-    const next = this.voiceAgents.get(nextName)
-    if (next) {
-      next.setMuteInput(false)
-      next.setMuteOutput(false)
-      next.sendContext('[GAME] It\'s your turn to speak. React to the ongoing discussion.')
+    // Mute the agent that just finished speaking
+    const agent = this.voiceAgents.get(fromName)
+    if (agent) { agent.setMuteInput(true); agent.setMuteOutput(true) }
+    this.broadcastEvent({ type: 'speaker_changed', speakerId: null })
+    // Only notify GM during day/voting — during night this would trigger GM speech
+    // that blocks player audio just as action windows open
+    if (this.state.phase !== 'night') {
+      this.bridge?.sendSilentContext(`[SYSTEM] ${fromName} has finished speaking.`)
     }
-    this.log('chain', `Speak chain: ${fromName} done → ${nextName} active`)
+    this.log('voiceAgent', `${fromName} finished speaking — muted`)
   }
 
   // kept for backwards-compat with any outstanding client set_active_agent messages
@@ -453,7 +417,7 @@ export class GameManager {
 
     const roleSummary = this.state.players.map((p) => `${p.name}=${p.role}`).join(', ')
     this.log('roles', roleSummary)
-    this.log('timing', `startGame: initGemini launched, waiting for bridge before startNight`)
+    this.log('startGame', `initGemini launched`)
     this.initGemini()
   }
 
@@ -496,6 +460,7 @@ export class GameManager {
 
     const prompt = buildGameMasterPrompt({
       players: this.state.players.map((p) => p.name),
+      botNames: [...this.voiceAgents.keys()],
       mafiaNames: mafiaPlayers.map((p) => p.name),
       detectiveName: detective?.name || 'none',
       doctorName: doctor?.name || 'none',
@@ -509,6 +474,7 @@ export class GameManager {
       { name: 'start_voting', description: 'Start voting phase after discussion', parameters: { type: 'OBJECT', properties: {} } },
       { name: 'cast_vote', description: 'Record a vote from a player', parameters: { type: 'OBJECT', properties: { voter: { type: 'STRING' }, target: { type: 'STRING' } }, required: ['voter', 'target'] } },
       { name: 'update_suspicion', description: 'Update suspicion level for a player', parameters: { type: 'OBJECT', properties: { player: { type: 'STRING' }, score: { type: 'NUMBER' }, reason: { type: 'STRING' } }, required: ['player', 'score', 'reason'] } },
+      { name: 'address_agent', description: 'Unmute a specific AI agent so they can respond when a player addresses them by name. Only call this when a player explicitly says an agent\'s name.', parameters: { type: 'OBJECT', properties: { name: { type: 'STRING', description: 'The agent name to unmute (e.g. Marcus, Sophie, Rex)' } }, required: ['name'] } },
     ]
 
     this.bridge = new AgentBridge(fishjamId, managementToken, apiKey, 'GameMaster')
@@ -530,11 +496,14 @@ export class GameManager {
         if (speaker === 'player' && playerName) {
           const player = this.state.players.find((p) => p.name === playerName)
           if (player) this.broadcastEvent({ type: 'speaker_changed', speakerId: player.id })
-          this.handleVoiceFallback(text)
+          this.log('heard', `[${this.state.phase.toUpperCase()}] ${playerName}: "${text}"`)
+          this.handleVoiceFallback(text, playerName)
+          if (this.state.phase === 'day') this.resetSilenceTimer()
         }
 
         if (speaker === 'gemini') {
           this.handleGeminiTranscriptFallback(text)
+          if (this.state.phase === 'day') this.resetSilenceTimer()
         }
       },
 
@@ -558,9 +527,9 @@ export class GameManager {
       },
     })
 
-    this.log('timing', `initGemini START at ${Date.now()}`)
-    await this.bridge.start(this.fishjamRoomId, prompt, tools, 'Orus', false)
-    this.log('timing', `Bridge READY at ${Date.now()} — Game Master connected and audible`)
+    // skipVAD=true: all player audio reaches Gemini continuously (no floor-VAD blocking)
+    await this.bridge.start(this.fishjamRoomId, prompt, tools, 'Orus', false, true)
+    this.log('startGame', `Bridge READY — Game Master connected`)
 
     setTimeout(() => this.startNight(), GAME_CONSTANTS.ROLE_REVEAL_DELAY)
   }
@@ -581,6 +550,7 @@ export class GameManager {
 
     if (player.role === 'mafia') {
       this.mafiaVotes.set(playerId, targetId)
+      this.closeNightActionWindow(playerId)
       this.log('night', `${player.name} UI → kill → ${target.name}`)
       // When all human mafia have voted, give 5s grace period for detective/doctor to act
       const humanMafia = this.state.players.filter((p) => p.role === 'mafia' && p.status === 'alive' && !this.isBot(p.name))
@@ -597,9 +567,11 @@ export class GameManager {
       }
     } else if (player.role === 'detective' && this.detectiveTarget === null) {
       this.detectiveTarget = targetId
+      this.closeNightActionWindow(playerId)
       this.log('night', `${player.name} UI → investigate → ${target.name}`)
     } else if (player.role === 'doctor' && this.doctorTarget === null) {
       this.doctorTarget = targetId
+      this.closeNightActionWindow(playerId)
       this.log('night', `${player.name} UI → save → ${target.name}`)
     }
 
@@ -670,6 +642,7 @@ export class GameManager {
         if (voter.id === target.id) break
         this.log('night', `${voter.name} → kill → ${target.name}`)
         this.mafiaVotes.set(voter.id, target.id)
+        if (!this.isBot(voter.name)) this.closeNightActionWindow(voter.id)
         // Notify narrator when a bot acts so it can continue narrating
         if (this.isBot(voter.name)) {
           const remainingMafia = this.state.players.filter(
@@ -679,7 +652,7 @@ export class GameManager {
             if (this.isNightComplete()) {
               this.bridge?.sendSilentContext(`[SYSTEM] All roles have acted. Call resolve_night now.`)
             } else {
-              this.bridge?.sendSilentContext(`[SYSTEM] All mafia bots have chosen their target. Say "The mafia has chosen." and wait for remaining roles.`)
+              this.bridge?.sendSilentContext(`[SYSTEM] Mafia has acted. Do NOT speak. Stay silent and wait for remaining human roles to act.`)
             }
           }
         }
@@ -693,12 +666,16 @@ export class GameManager {
         if (!target) break
         this.log('night', `Detective → investigate → ${target.name}`)
         this.detectiveTarget = target.id
+        if (!this.isBot(cmd.voter || '')) {
+          const detective = this.state.players.find((p) => p.role === 'detective' && p.status === 'alive')
+          if (detective) this.closeNightActionWindow(detective.id)
+        }
         // Notify narrator when a bot detective acts
         if (this.isBot(cmd.voter || '')) {
           if (this.isNightComplete()) {
             this.bridge?.sendSilentContext(`[SYSTEM] All roles have acted. Call resolve_night now.`)
           } else {
-            this.bridge?.sendSilentContext(`[SYSTEM] Bot Detective has investigated. Say "The Detective has seen enough." and wait for remaining roles.`)
+            this.bridge?.sendSilentContext(`[SYSTEM] Detective has acted. Do NOT speak. Stay silent and wait for remaining human roles.`)
           }
         }
         this.checkAllNightActionsComplete()
@@ -711,6 +688,10 @@ export class GameManager {
         if (!target) break
         this.log('night', `Doctor → save → ${target.name}`)
         this.doctorTarget = target.id
+        if (!this.isBot(cmd.voter || '')) {
+          const doctor = this.state.players.find((p) => p.role === 'doctor' && p.status === 'alive')
+          if (doctor) this.closeNightActionWindow(doctor.id)
+        }
         // Notify narrator when a bot doctor acts
         if (this.isBot(cmd.voter || '')) {
           if (this.isNightComplete()) {
@@ -773,18 +754,46 @@ export class GameManager {
         break
       }
 
+      case 'address_agent': {
+        const agentName = (cmd as any).name as string
+        if (!agentName) break
+        const agent = this.voiceAgents.get(agentName)
+        if (!agent) {
+          this.log('voiceAgent', `address_agent: unknown agent "${agentName}"`)
+          break
+        }
+        if (this.agentsManuallyMuted) {
+          this.log('voiceAgent', `address_agent: agents are manually muted — ignoring`)
+          break
+        }
+        // Mute all agents first, then unmute only the addressed one
+        this.voiceAgents.forEach(a => { a.setMuteInput(true); a.setMuteOutput(true) })
+        agent.setMuteInput(false)
+        agent.setMuteOutput(false)
+        agent.sendContext(`[GAME] A player addressed you by name. Respond in 1–2 sentences then stop.`)
+        const agentPlayer = this.state.players.find(p => p.name === agentName)
+        if (agentPlayer) this.broadcastEvent({ type: 'speaker_changed', speakerId: agentPlayer.id })
+        this.log('voiceAgent', `address_agent: ${agentName} unmuted for response`)
+        break
+      }
+
       default:
         this.log('command', `Unknown: ${cmd.action}`)
     }
   }
 
-  private handleVoiceFallback(text: string) {
+  private handleVoiceFallback(text: string, speakerName?: string) {
     const lower = text.toLowerCase()
     const allPlayers = this.state.players
     const mentioned = allPlayers.find((p) => lower.includes(p.name.toLowerCase()))
-    if (!mentioned) return
+    if (!mentioned) {
+      if (this.state.phase === 'night' || this.state.phase === 'voting') {
+        this.log('voiceFallback', `[MISS] No player name found in: "${text}" (phase=${this.state.phase}, speaker=${speakerName ?? 'unknown'}) — known names: ${allPlayers.map(p => p.name).join(', ')}`)
+      }
+      return
+    }
 
-    this.log('voiceFallback', `Heard player name "${mentioned.name}" in "${text}" (phase: ${this.state.phase}, alive: ${mentioned.status === 'alive'})`)
+    this.log('voiceFallback', `[HIT] "${mentioned.name}" in "${text}" (speaker=${speakerName ?? 'unknown'}, phase=${this.state.phase}, alive=${mentioned.status === 'alive'})`)
 
     if (this.state.phase === 'night') {
       const hasActed = (p: typeof this.state.players[0]) => {
@@ -798,8 +807,16 @@ export class GameManager {
           (p.role === 'mafia' || p.role === 'detective' || p.role === 'doctor') &&
           !hasActed(p)
       )
+      // Prefer the actual speaker if known; fall back to first unacted human role
+      const actorBySpeaker = speakerName
+        ? humanNightActors.find((p) => p.name === speakerName)
+        : undefined
+      if (humanNightActors.length === 0) {
+        this.log('voiceFallback', `[SKIP] Night: no unacted human special roles (all acted or no human roles)`)
+        return
+      }
       if (humanNightActors.length > 0) {
-        const actor = humanNightActors[0]
+        const actor = actorBySpeaker ?? humanNightActors[0]
         if (this.voiceFallbackTimeout) clearTimeout(this.voiceFallbackTimeout)
         this.voiceFallbackTimeout = setTimeout(() => {
           if (hasActed(actor)) return
@@ -807,6 +824,7 @@ export class GameManager {
           if (actor.role === 'mafia') this.mafiaVotes.set(actor.id, mentioned.id)
           else if (actor.role === 'detective') this.detectiveTarget = mentioned.id
           else if (actor.role === 'doctor') this.doctorTarget = mentioned.id
+          this.closeNightActionWindow(actor.id)
           this.broadcastEvent({ type: 'transcript', speaker: 'gemini', text: `Your choice: ${mentioned.name}. Confirmed.` })
           this.bridge?.sendText(`[SYSTEM] ${actor.role} action received: target is ${mentioned.name}. Move to the next role or call resolve_night if all done.`)
           this.checkAllNightActionsComplete()
@@ -818,8 +836,12 @@ export class GameManager {
       const humanVoters = this.state.players.filter(
         (p) => p.status === 'alive' && !this.isBot(p.name) && !this.votes.has(p.id)
       )
+      // Prefer the actual speaker if known; fall back to first human who hasn't voted
+      const voterBySpeaker = speakerName
+        ? humanVoters.find((p) => p.name === speakerName)
+        : undefined
       if (humanVoters.length > 0) {
-        const voter = humanVoters[0]
+        const voter = voterBySpeaker ?? humanVoters[0]
         if (voter.id === mentioned.id) return
         if (this.voiceFallbackTimeout) clearTimeout(this.voiceFallbackTimeout)
         this.voiceFallbackTimeout = setTimeout(() => {
@@ -852,7 +874,6 @@ export class GameManager {
         const hasInvestigate = buf.includes('investigate')
         const hasDoctor = buf.includes('doctor_save') || buf.includes('doctor save')
         const hasResolve = buf.includes('resolve_night') || buf.includes('resolve night')
-          || (buf.includes('sun') && buf.includes('rise'))
 
         if (hasKill && mentionedPlayer) {
           const mafiaPlayers = this.state.players.filter((p) => p.role === 'mafia' && p.status === 'alive')
@@ -890,7 +911,7 @@ export class GameManager {
 
         if (hasResolve) {
           this.log('transcriptFallback', 'resolve_night detected from speech')
-          if (this.state.phase === 'night') this.resolveNight()
+          if (this.state.phase === 'night' && this.isNightComplete()) this.resolveNight()
         }
       }
 
@@ -910,13 +931,14 @@ export class GameManager {
         const hasCastVote = buf.includes('cast_vote') || buf.includes('cast vote')
           || buf.includes('vote for') || buf.includes('votes for') || buf.includes('i vote')
         if (hasCastVote) {
-          for (const bot of this.state.players.filter((p) => this.isBot(p.name) && p.status === 'alive' && !this.votes.has(p.id))) {
-            if (buf.includes(bot.name.toLowerCase())) {
-              this.log('transcriptFallback', `vote detected: ${bot.name} → ${mentionedPlayer.name}`)
-              this.votes.set(bot.id, mentionedPlayer.id)
-              this.broadcastEvent({ type: 'vote_cast', fromId: bot.id, targetId: mentionedPlayer.id })
-              const alive = this.state.players.filter((p) => p.status === 'alive')
-              if (this.votes.size >= alive.length) this.resolveVotes()
+          // Match any alive player (human or bot) whose name appears in the GM's speech
+          for (const voter of this.state.players.filter((p) => p.status === 'alive' && !this.votes.has(p.id))) {
+            if (buf.includes(voter.name.toLowerCase())) {
+              this.log('transcriptFallback', `vote detected: ${voter.name} → ${mentionedPlayer.name}`)
+              this.votes.set(voter.id, mentionedPlayer.id)
+              this.broadcastEvent({ type: 'vote_cast', fromId: voter.id, targetId: mentionedPlayer.id })
+              const eligibleVoters = this.state.players.filter((p) => p.status === 'alive' && (p.isConnected || this.isBot(p.name)))
+              if (this.votes.size >= eligibleVoters.length) this.resolveVotes()
               break
             }
           }
@@ -1004,7 +1026,7 @@ export class GameManager {
       `3. For each HUMAN role: listen — when they say a name, IMMEDIATELY call the matching function (night_kill / investigate / doctor_save).\n` +
       `4. For each BOT role: do NOT call any functions — you will receive a [SYSTEM] notification when the bot has acted.\n` +
       `5. When you receive [SYSTEM] that all roles are done → call resolve_night immediately.\n\n` +
-      `CRITICAL: When a human says a name like "I choose Bruno" — call the function right away. Do not just acknowledge verbally.`
+      `CRITICAL: Humans speak naturally — "I want to kill Bruno", "save Marcus", "I pick Sophie", etc. The moment you hear ANY player name in their speech, call the function. Do NOT respond verbally. Do NOT ask for confirmation. Just call the tool.`
     )
 
     // Send direct night instructions to each VoiceAgent based on their role
@@ -1097,9 +1119,10 @@ export class GameManager {
       this.checkAllNightActionsComplete()
     }, 15_000)
 
-    // When narrator finishes → start night timer (so client and server timers are in sync)
+    // When narrator finishes → open voice action windows for human roles + start night timer
     this.pendingPhaseTransition = () => {
       this.log('timer', `Night timer starts: ${GAME_CONSTANTS.NIGHT_MAFIA_TIMEOUT / 1000}s`)
+      this.openNightActionWindows()
       this.nightTimeout = setTimeout(() => {
         this.log('timer', 'Night timeout → resolveNight()')
         this.resolveNight()
@@ -1118,6 +1141,33 @@ export class GameManager {
     }, 30_000)
   }
 
+  private openNightActionWindows() {
+    const humanSpecialRoles = this.state.players.filter(
+      (p) => p.status === 'alive' && !this.isBot(p.name) &&
+        (p.role === 'mafia' || p.role === 'detective' || p.role === 'doctor')
+    )
+    const unacted = humanSpecialRoles.filter((p) => {
+      if (p.role === 'mafia') return !this.mafiaVotes.has(p.id)
+      if (p.role === 'detective') return this.detectiveTarget === null
+      if (p.role === 'doctor') return this.doctorTarget === null
+      return false
+    })
+    for (const player of unacted) {
+      this.nightActionWindowPlayers.add(player.id)
+      this.sendToPlayer(player.id, { type: 'night_action_prompt', role: player.role })
+      this.log('night', `Action window opened for ${player.name} (${player.role})`)
+    }
+    // No sendSilentContext here — turnComplete:false caused 1008 session crashes.
+    // The GM already has full instructions from the startNight() sendText call.
+  }
+
+  private closeNightActionWindow(playerId: string) {
+    if (!this.nightActionWindowPlayers.has(playerId)) return
+    this.nightActionWindowPlayers.delete(playerId)
+    this.sendToPlayer(playerId, { type: 'night_action_received' })
+    this.log('night', `Action window closed for ${playerId}`)
+  }
+
   private resolveNight() {
     if (this.resolving) {
       this.log('night', `[RESOLVE] resolveNight() called but already resolving — skipping`)
@@ -1126,6 +1176,9 @@ export class GameManager {
     this.resolving = true
     if (this.nightTimeout) { clearTimeout(this.nightTimeout); this.nightTimeout = null }
     if (this.mafiaGraceTimer) { clearTimeout(this.mafiaGraceTimer); this.mafiaGraceTimer = null }
+    // Close any remaining open action windows
+    this.nightActionWindowPlayers.forEach(pid => this.sendToPlayer(pid, { type: 'night_action_received' }))
+    this.nightActionWindowPlayers.clear()
 
     // Log full night action summary
     const mafiaPlayers = this.state.players.filter((p) => p.role === 'mafia' && p.status === 'alive')
@@ -1194,7 +1247,7 @@ export class GameManager {
     this.doctorTarget = null
 
     // 6. Transition — wait for narrator AND any speaking voice agent before startDay
-    this.log('timing', `resolveNight done at ${Date.now()} — awaiting narrator before startDay`)
+    this.log('night', `[RESOLVE] done — awaiting narrator before startDay`)
     if (this.bridge) {
       this.bridge.afterNarratorFinishes(() => this.afterAnyVoiceAgentStops(() => {
         if (this.state.phase !== 'game_over') this.startDay(killedId, doctorSaved)
@@ -1235,6 +1288,7 @@ export class GameManager {
 
     this.bridge?.sendText(`[SYSTEM] ${dayMsg}`)
 
+    this.resetSilenceTimer()
     this.log('timer', `Day timeout starts: ${GAME_CONSTANTS.DAY_SPEECH_TIMEOUT / 1000}s`)
     this.dayTimeout = setTimeout(() => {
       if (this.state.phase === 'day') {
@@ -1244,8 +1298,23 @@ export class GameManager {
     }, GAME_CONSTANTS.DAY_SPEECH_TIMEOUT)
   }
 
+  private resetSilenceTimer() {
+    if (this.silenceTimer) { clearTimeout(this.silenceTimer); this.silenceTimer = null }
+    if (this.state.phase !== 'day') return
+    this.silenceTimer = setTimeout(() => {
+      this.silenceTimer = null
+      if (this.state.phase !== 'day') return
+      const alivePlayers = this.state.players.filter((p) => p.status === 'alive').map((p) => p.name).join(', ')
+      this.bridge?.sendText(
+        `[SYSTEM] The room has gone silent. Drop a suspicion hint — point out something suspicious about one player's behavior (1 short sentence). Alive: ${alivePlayers}.`
+      )
+      this.log('day', 'Silence > 5s — sent suspicion hint prompt to narrator')
+    }, 5_000)
+  }
+
   startVoting() {
     if (this.dayTimeout) { clearTimeout(this.dayTimeout); this.dayTimeout = null }
+    if (this.silenceTimer) { clearTimeout(this.silenceTimer); this.silenceTimer = null }
     this.resolving = false
     this.state.phase = 'voting'
     this.setAllVoiceAgentsMuted(false)
@@ -1260,9 +1329,13 @@ export class GameManager {
     this.log('phase', `Bridge alive: ${this.bridge?.isAlive() ?? false}, VoiceAgents active: ${this.voiceAgents.size}`)
     this.broadcastEvent({ type: 'phase_changed', phase: 'voting', state: this.getPublicState() })
 
-    // Narrator announces voting (2-3 sentences)
+    // Narrator announces voting and solicits human players one by one
+    const humanVoteOrder = aliveHumans.map((p) => p.name).join(', ')
+    const humanSection = aliveHumans.length > 0
+      ? `Go through each human player IN THIS ORDER: ${humanVoteOrder}. For each one, say their name and ask who they want to eliminate. Wait for their voice response, then call cast_vote with their answer. If they don't respond within 10 seconds, skip them (do NOT call cast_vote).`
+      : `There are no human players to solicit.`
     this.bridge?.sendText(
-      `[SYSTEM] Voting time! Alive: ${aliveList}. Announce voting starts (2-3 sentences). Call each player by name, ask who to eliminate, then call cast_vote for their answer.`
+      `[SYSTEM] Voting time! Alive players: ${aliveList}. Announce that voting begins (1-2 sentences). Then solicit HUMAN players only — bots will vote on their own. ${humanSection} After all humans have voted (or been skipped), announce the vote is closing.`
     )
 
     // Defer bot instructions + voting timer until narrator finishes speaking
@@ -1396,7 +1469,7 @@ export class GameManager {
           : `[SYSTEM] No one was eliminated. Announce this briefly, then stop.`
       )
 
-      this.log('timing', `resolveVoting done at ${Date.now()} — awaiting turnComplete before startNight`)
+      this.log('voting', `[RESOLVE] done — awaiting narrator before startNight`)
       if (this.bridge) {
         this.bridge.afterNarratorFinishes(() => this.afterAnyVoiceAgentStops(() => {
           if (this.state.phase !== 'game_over') this.startNight()
@@ -1446,7 +1519,7 @@ export class GameManager {
     if (metrics.happiness > 0.4) observations.push(`smiling ${(metrics.happiness * 100).toFixed(0)}%`)
     if (metrics.happiness > 0.4 && metrics.stress > 0.2) observations.push('possible nervous smile')
 
-    this.log('face', `${player.name}: ${observations.join(', ')}`)
+    if (observations.length > 0) this.log('face', `${player.name}: ${observations.join(', ')}`)
   }
 
   sendPlayerAudio(_chunk: Buffer) {
@@ -1484,7 +1557,7 @@ export class GameManager {
     const alive = this.state.players.filter((p) => p.status === 'alive')
     const mafiaAlive = alive.filter((p) => p.role === 'mafia').length
     const civiliansAlive = alive.length - mafiaAlive
-    this.log('winCheck', `Alive: ${alive.length} (mafia: ${mafiaAlive}, civilians: ${civiliansAlive})`)
+    this.log('winCheck', `mafia=${mafiaAlive} civilians=${civiliansAlive}`)
     if (mafiaAlive === 0) this.endGame('civilians')
     else if (mafiaAlive >= civiliansAlive) this.endGame('mafia')
   }
@@ -1499,7 +1572,7 @@ export class GameManager {
     this.bridge?.sendText(
       `[SYSTEM] Game over! ${winner} won! Roles: ${this.state.players.map((p) => `${p.name}=${p.role}`).join(', ')}. Announce dramatically.`
     )
-    this.cleanup()
+    this.bridge?.afterNarratorFinishes(() => this.cleanup())
   }
 
   cleanup() {
@@ -1509,6 +1582,7 @@ export class GameManager {
     this.voiceAgents.clear()
     if (this.nightTimeout) { clearTimeout(this.nightTimeout); this.nightTimeout = null }
     if (this.dayTimeout) { clearTimeout(this.dayTimeout); this.dayTimeout = null }
+    if (this.silenceTimer) { clearTimeout(this.silenceTimer); this.silenceTimer = null }
     if (this.votingTimeout) { clearTimeout(this.votingTimeout); this.votingTimeout = null }
     if (this.voiceFallbackTimeout) { clearTimeout(this.voiceFallbackTimeout); this.voiceFallbackTimeout = null }
     if (this.geminiTranscriptTimer) { clearTimeout(this.geminiTranscriptTimer); this.geminiTranscriptTimer = null }

@@ -28,6 +28,7 @@ export function RoomPage() {
   const investigationResult = useGameStore((s) => s.investigationResult)
   const agentsMuted = useGameStore((s) => s.agentsMuted)
   const selectedAgentIds = useGameStore((s) => s.selectedAgentIds)
+  const nightActionWindowOpen = useGameStore((s) => s.nightActionWindowOpen)
   const { send, wsRef, setOnBinary } = useGameSocket()
   const { playAudio } = useAudioPipeline(wsRef)
   const { metrics: faceMetrics, setVideoElement, startAnalysis, stopAnalysis, onMetrics } = useFaceAnalysis()
@@ -47,22 +48,24 @@ export function RoomPage() {
     setOnBinary(playAudio)
   }, [setOnBinary, playAudio])
 
-  // Auto-mute mic during phases where players cannot talk to each other
+  // Single effect managing mic mute state — never includes isMicrophoneMuted as dep
+  // to avoid infinite loops when toggleMicrophoneMute triggers a re-render.
   useEffect(() => {
     const phase = gameState?.phase
     if (!phase) return
-    if (phase === 'role_assignment') {
-      if (!isMicrophoneMuted) {
-        toggleMicrophoneMute()
-        autoMutedRef.current = true
-      }
-    } else {
-      if (autoMutedRef.current && isMicrophoneMuted) {
-        toggleMicrophoneMute()
-        autoMutedRef.current = false
-      }
+
+    // Desired state: muted unless we're in an action window
+    const shouldBeMuted = (phase === 'role_assignment' || phase === 'night') && !nightActionWindowOpen
+
+    if (shouldBeMuted && !isMicrophoneMuted) {
+      toggleMicrophoneMute()
+    } else if (!shouldBeMuted && isMicrophoneMuted && autoMutedRef.current) {
+      toggleMicrophoneMute()
     }
-  }, [gameState?.phase, isMicrophoneMuted, toggleMicrophoneMute])
+
+    autoMutedRef.current = shouldBeMuted
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameState?.phase, nightActionWindowOpen])
 
   // Redirect to lobby if no playerName (direct URL navigation)
   useEffect(() => {
@@ -310,7 +313,7 @@ export function RoomPage() {
 
         {/* Night panel — shown only after narrator finishes speaking */}
         {isNight && isAlive && !isNarratorSpeaking && (
-          <NightPanel onAction={(targetId) => send({ type: 'night_action', targetId })} />
+          <NightPanel />
         )}
 
         {/* Detective investigation result */}
@@ -399,19 +402,15 @@ export function RoomPage() {
         )}
 
         {/* Voting panel */}
-        {isVoting && isAlive && playerId && (
+        {isVoting && isAlive && (
           <div className="max-w-[400px] mx-auto my-5">
-            <VotePanel
-              players={gameState.players}
-              currentPlayerId={playerId}
-              onVote={(targetId) => send({ type: 'cast_vote', targetId })}
-            />
+            <VotePanel />
           </div>
         )}
 
         {/* Game over */}
         {isGameOver && gameState.winner && (
-          <GameOver winner={gameState.winner} />
+          <GameOver winner={gameState.winner} players={gameState.players} />
         )}
       </div>
     </div>
