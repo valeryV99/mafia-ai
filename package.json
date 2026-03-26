@@ -4,6 +4,7 @@
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
     "dev": "bun run --filter '*' dev",
+    "dev:log": "powershell -Command \"bun run dev 2>&1 | Tee-Object -FilePath server.log\"",
     "dev:server": "bun run --filter server dev",
     "dev:client": "bun run --filter client dev",
     "lint": "bunx biome check .",

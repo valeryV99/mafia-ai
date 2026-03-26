@@ -68,7 +68,7 @@ export class GameManager {
     },
     {
       name: 'Rex',
-      persona: 'The Hothead — aggressive and impulsive, quick to accuse, loud and dominant. Speaks fast and interrupts. Uses phrases like "obviously it\'s you!" and "stop making excuses".',
+      persona: 'The Alpha — confident, direct, and game-focused. Makes bold reads and sticks to them. Never rattled, never emotional — just decisive. Uses phrases like "my read is clear" and "I\'m locking in my vote".',
       voice: 'Fenrir',
     },
     {
@@ -310,16 +310,42 @@ export class GameManager {
       // Must keep at least one agent selected
       const currentlySelected = this.getOrderedVoiceAgentNames()
       if (currentlySelected.length <= 1) return
+
+      // Determine if this agent is the active speaker BEFORE modifying selection
+      const currentActiveName = this.agentChainActive ? currentlySelected[this.agentChainIndex] : null
+      const wasActiveSpeaker = currentActiveName === agentName
+
       this.selectedAgentNames.delete(agentName)
-      // Mute the deselected agent
       this.voiceAgents.get(agentName)?.setMuteInput(true)
       this.voiceAgents.get(agentName)?.setMuteOutput(true)
+
+      if (wasActiveSpeaker) {
+        // Active speaker was muted — advance to next in the updated ordered list
+        const newOrdered = this.getOrderedVoiceAgentNames()
+        if (newOrdered.length > 0) {
+          this.agentChainIndex = this.agentChainIndex % newOrdered.length
+          const nextName = newOrdered[this.agentChainIndex]
+          const next = this.voiceAgents.get(nextName)
+          if (next) {
+            next.setMuteInput(false)
+            next.setMuteOutput(false)
+            next.sendContext('[GAME] It\'s your turn to speak. React to the ongoing discussion.')
+          }
+          this.log('chain', `Deselected active speaker ${agentName} → ${nextName} active`)
+        } else {
+          this.agentChainActive = false
+        }
+      }
+      // If not the active speaker, the chain continues uninterrupted
     } else {
       this.selectedAgentNames.add(agentName)
+      if (!this.agentChainActive) {
+        // Chain not running yet — start it so the new agent can participate
+        this.startAgentOutputChain()
+      }
+      // Chain already running — current speaker keeps speaking; new agent joins on next advance
     }
 
-    // Restart chain with updated selection
-    this.startAgentOutputChain()
     this.broadcastEvent({ type: 'agent_selection_changed', selectedAgentIds: this.getSelectedAgentIds() })
     this.log('voiceAgent', `Agent ${agentName} ${selected ? 'selected' : 'deselected'}`)
   }
