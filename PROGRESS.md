@@ -67,7 +67,7 @@ _Based on CONVENTIONS.md._
 - [x] Timer duration: 80s dev / 120s prod
 - [x] Players discuss freely (mic live)
 - [x] Narrator silent during discussion
-- [ ] If silence > 5s: narrator drops a suspicion hint
+- [x] If silence > 5s: narrator drops a suspicion hint
 - [x] Timer expires → voting starts automatically
 
 ---
@@ -107,7 +107,7 @@ _Based on CONVENTIONS.md._
 
 ## Step 10 — Game Over (`game_over`)
 
-- [ ] Narrator announces winner dramatically
+- [x] Narrator announces winner dramatically
 - [x] Timer: not shown
 
 ---
@@ -123,9 +123,9 @@ _Based on CONVENTIONS.md._
 
 ## AI Agent Communication Rules
 
-- [ ] Agents only speak during Lobby, Day, and Voting phases (silent at Night and Role Assignment)
-- [ ] Agent responds only when addressed directly by name
-- [ ] Group command (e.g. "Everyone, answer") → each agent responds in turn with 1–2 sentences
+- [x] Agents only speak during Lobby, Day, and Voting phases (silent at Night and Role Assignment)
+- [x] Agent responds only when addressed directly by name
+- [x] Group command (e.g. "Everyone, answer") → each agent responds in turn with 1–2 sentences
 
 ---
 
@@ -133,14 +133,14 @@ _Based on CONVENTIONS.md._
 
 - [x] GameMaster bridge only forwards audio from human peers (whitelist)
 - [x] VoiceAgent bridge only forwards audio from human peers (whitelist)
-- [ ] No 1008 Policy Violation during normal gameplay
-- [ ] `turnComplete` fires reliably after each narrator speech
-- [ ] Narrator never interrupted mid-sentence by a server timeout
+- [x] No 1008 Policy Violation during normal gameplay
+- [x] `turnComplete` fires reliably after each narrator speech
+- [x] Narrator never interrupted mid-sentence by a server timeout
 
 ---
 
 ## Known Bugs
 
 - **Game Master issues**:
-  - [ ] sometimes can stop answering or the audio cuts off at the end (added logging to diagnose)
-  - [ ] sometimes dont fire turnComplete, so the safety fallback triggered (added logging to diagnose)
+  - [x] sometimes can stop answering or the audio cuts off at the end — fixed by Gemini session auto-reconnect (AgentBridge)
+  - [x] sometimes dont fire turnComplete, so the safety fallback triggered — fixed by synthetic turnComplete on audio silence (AgentBridge)

@@ -93,7 +93,12 @@ export function useGameSocket() {
               clearVotes()
             }
             // Clear investigation result only when a new night starts (not on day/voting transitions)
-            if (msg.phase === 'night') useGameStore.getState().setInvestigationResult(null)
+            if (msg.phase === 'night') {
+              useGameStore.getState().setInvestigationResult(null)
+              useGameStore.getState().setNightActionSubmitted(false)
+            }
+            // Close any open night action window when leaving night phase
+            if (msg.phase !== 'night') useGameStore.getState().setNightActionWindowOpen(false)
             console.log(`%c[Phase] → ${msg.phase} at ${Date.now()}`, 'color: #34d399; font-weight: bold')
 
             // Cancel previous safety timer (from earlier phase)
@@ -144,6 +149,17 @@ export function useGameSocket() {
           case 'speaker_changed': {
             const { setCurrentSpeaker } = useGameStore.getState()
             setCurrentSpeaker(msg.speakerId)
+            break
+          }
+          case 'night_action_prompt': {
+            useGameStore.getState().setNightActionWindowOpen(true)
+            console.log(`%c[Night] Action window OPEN (${msg.role})`, 'color: #c084fc; font-weight: bold')
+            break
+          }
+          case 'night_action_received': {
+            useGameStore.getState().setNightActionWindowOpen(false)
+            useGameStore.getState().setNightActionSubmitted(true)
+            console.log(`%c[Night] Action window CLOSED — action confirmed`, 'color: #c084fc; font-weight: bold')
             break
           }
           case 'investigation_result': {
