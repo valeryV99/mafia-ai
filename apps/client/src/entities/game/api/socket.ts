@@ -199,6 +199,10 @@ export function useGameSocket() {
             addBehavioralNote(msg.playerName, msg.note)
             break
           }
+          case 'stress_alert': {
+            useGameStore.getState().setPlayerStress(msg.playerId, msg.level)
+            break
+          }
           case 'agent_mute_changed': {
             useGameStore.getState().setActiveVoiceAgent(msg.activeAgentId)
             break

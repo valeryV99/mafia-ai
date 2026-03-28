@@ -11,7 +11,7 @@ import { VoteTracker } from '@/widgets/vote-tracker'
 import { NightPanel } from '@/features/night-action'
 import { VotePanel } from '@/features/vote'
 import { StartButton } from '@/features/start-game'
-import { VictoryConfetti, NightShaderOverlay } from '@/widgets/gpu-effects'
+import { VictoryConfetti, NightShaderOverlay, GpuErrorBoundary } from '@/widgets/gpu-effects'
 import { RoomHeader } from '@/widgets/room-header'
 import { RoomInGameStatusBar } from '@/widgets/room-status-bar'
 import { InvestigationResultCard } from '@/widgets/investigation-result'
@@ -75,8 +75,10 @@ export function RoomPage() {
   return (
     <RoomShell isNight={isNight}>
       <PhaseOverlay phase={gameState.phase} />
-      <NightShaderOverlay isNight={isNight} />
-      <VictoryConfetti winner={isGameOver ? gameState.winner : null} />
+      <GpuErrorBoundary>
+        <NightShaderOverlay isNight={isNight} />
+        <VictoryConfetti winner={isGameOver ? gameState.winner : null} />
+      </GpuErrorBoundary>
 
       <RoomContent>
         <RoomHeader gameState={gameState} peerStatus={peerStatus} />

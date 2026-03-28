@@ -25,12 +25,12 @@ const CIVILIAN_COLORS: [number, number, number, number][] = [
 export function VictoryConfetti({ winner }: VictoryConfettiProps) {
   const confettiRef = useRef<ConfettiRef>(null)
 
+  // Delayed burst — give Confetti time to initialize WebGPU context
   useEffect(() => {
-    if (winner && confettiRef.current) {
-      confettiRef.current.addParticles(300)
-      const timer = setTimeout(() => confettiRef.current?.addParticles(200), 800)
-      return () => clearTimeout(timer)
-    }
+    if (!winner) return
+    const t1 = setTimeout(() => confettiRef.current?.addParticles(300), 500)
+    const t2 = setTimeout(() => confettiRef.current?.addParticles(200), 1300)
+    return () => { clearTimeout(t1); clearTimeout(t2) }
   }, [winner])
 
   if (!navigator.gpu || !winner) return null
@@ -38,7 +38,7 @@ export function VictoryConfetti({ winner }: VictoryConfettiProps) {
   return (
     <Confetti
       ref={confettiRef}
-      initParticleAmount={0}
+      initParticleAmount={100}
       maxParticleAmount={600}
       maxDurationTime={6}
       size={1.8}
