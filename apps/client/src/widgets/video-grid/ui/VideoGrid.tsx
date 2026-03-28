@@ -37,6 +37,7 @@ interface VideoGridProps {
 export function VideoGrid({ players, playerId, playerName, localPeer, remotePeers }: VideoGridProps) {
   const suspicions = useGameStore((s) => s.suspicions)
   const currentSpeakerId = useGameStore((s) => s.currentSpeakerId)
+  const playerTranscripts = useGameStore((s) => s.playerTranscripts)
 
   // Build a map: playerName → Fishjam stream
   const streamByName = new Map<string, MediaStream | null>()
@@ -85,6 +86,7 @@ export function VideoGrid({ players, playerId, playerName, localPeer, remotePeer
               isDead={player.status === 'dead'}
               suspicion={suspicions[player.id]}
               isSpeaking={player.id === currentSpeakerId}
+              transcript={playerTranscripts[player.name]}
             />
           </div>
         )

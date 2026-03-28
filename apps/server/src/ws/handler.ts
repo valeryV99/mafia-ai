@@ -60,8 +60,9 @@ export async function handleClientEvent(
             fjRoomId = await fishjamService.createRoom()
             fishjamRooms.set(event.roomId, fjRoomId)
           }
-          const { token } = await fishjamService.addPeer(fjRoomId, { name: playerName })
+          const { token, peerId } = await fishjamService.addPeer(fjRoomId, { name: playerName })
           fishjamToken = token
+          game.mapFishjamPeer(peerId, playerName)
           // Set Fishjam room ID on game so AgentBridge can join
           game.setFishjamRoomId(fjRoomId)
         } catch (err) {

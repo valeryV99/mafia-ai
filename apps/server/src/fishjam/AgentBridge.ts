@@ -7,7 +7,8 @@ const log = (tag: string, ...args: unknown[]) => console.log(`[AgentBridge:${tag
 
 export interface AgentBridgeCallbacks {
   onGeminiAudio?: (audio: Buffer) => void
-  onTranscript?: (speaker: 'gemini' | 'player', text: string) => void
+  onTranscript?: (speaker: 'gemini' | 'player', text: string, speakerId?: string) => void
+  onTurnComplete?: () => void
   onToolCall?: (name: string, args: Record<string, unknown>) => void
 }
 
@@ -24,6 +25,12 @@ export class AgentBridge {
   private activeSpeakerId: string | null = null
   private silenceTimeout: ReturnType<typeof setTimeout> | null = null
   private readonly SILENCE_THRESHOLD = 300 // ms
+
+  private narratorSpeaking = false
+  private narratorStartedAt = 0
+  private pendingPhaseTransition: (() => void) | null = null
+  private pendingPhaseTimeout: ReturnType<typeof setTimeout> | null = null
+  private readonly PENDING_PHASE_TIMEOUT_MS = 15_000
 
   constructor(fishjamId: string, managementToken: string, geminiApiKey: string) {
     this.fishjamClient = new FishjamClient({ fishjamId, managementToken })
@@ -97,6 +104,9 @@ export class AgentBridge {
       }
 
       if (this.activeSpeakerId === peerId) {
+        // Drop player audio while narrator is speaking
+        if (this.narratorSpeaking) return
+
         // Forward to Gemini
         this.geminiSession?.sendRealtimeInput({
           audio: {
@@ -162,20 +172,35 @@ export class AgentBridge {
     // Input transcription (what player said)
     if (msg.serverContent?.inputTranscription?.text) {
       const text = msg.serverContent.inputTranscription.text
-      log('heard', `"${text}"`)
-      this.callbacks.onTranscript?.('player', text)
+      log('heard', `peerId="${this.activeSpeakerId ?? 'unknown'}" text="${text}"`)
+      this.callbacks.onTranscript?.('player', text, this.activeSpeakerId ?? undefined)
     }
 
     // Output transcription (what Gemini said)
     if (msg.serverContent?.outputTranscription?.text) {
       const text = msg.serverContent.outputTranscription.text
+      if (!this.narratorSpeaking) {
+        this.narratorStartedAt = Date.now()
+        log('narrator', 'SPEAKING start')
+      }
+      this.narratorSpeaking = true
       log('said', `"${text}"`)
       this.callbacks.onTranscript?.('gemini', text)
     }
 
     // Turn complete
     if (msg.serverContent?.turnComplete) {
-      log('turn', 'Complete')
+      const duration = Date.now() - this.narratorStartedAt
+      log('narrator', `DONE after ${(duration / 1000).toFixed(1)}s`)
+      this.narratorSpeaking = false
+      this.callbacks.onTurnComplete?.()
+      if (this.pendingPhaseTransition) {
+        if (this.pendingPhaseTimeout) clearTimeout(this.pendingPhaseTimeout)
+        const fn = this.pendingPhaseTransition
+        this.pendingPhaseTransition = null
+        log('narrator', 'Firing pending phase transition')
+        fn()
+      }
     }
   }
 
@@ -195,6 +220,17 @@ export class AgentBridge {
     // if (avgEnergy > 50) console.log(`[VAD] Energy: ${avgEnergy.toFixed(0)}`)
 
     return avgEnergy > 50 // <-- Lowered from 500 to 150
+  }
+
+  afterNarratorFinishes(fn: () => void) {
+    this.pendingPhaseTransition = fn
+    this.pendingPhaseTimeout = setTimeout(() => {
+      if (this.pendingPhaseTransition === fn) {
+        log('narrator', `Pending transition timed out after ${this.PENDING_PHASE_TIMEOUT_MS}ms — forcing`)
+        this.pendingPhaseTransition = null
+        fn()
+      }
+    }, this.PENDING_PHASE_TIMEOUT_MS)
   }
 
   sendText(message: string) {
@@ -225,5 +261,7 @@ export class AgentBridge {
     this.agent = null
     this.agentTrackId = null
     if (this.silenceTimeout) clearTimeout(this.silenceTimeout)
+    if (this.pendingPhaseTimeout) clearTimeout(this.pendingPhaseTimeout)
+    this.pendingPhaseTransition = null
   }
 }

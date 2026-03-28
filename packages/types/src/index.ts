@@ -40,7 +40,8 @@ export type ServerEvent =
   | { type: 'speaker_changed'; speakerId: string | null }
   | { type: 'game_over'; winner: 'mafia' | 'civilians'; state: GameState }
   | { type: 'investigation_result'; targetName: string; targetRole: Role }
-  | { type: 'transcript'; speaker: 'gemini' | 'player'; text: string }
+  | { type: 'transcript'; speaker: 'gemini' | 'player'; text: string; playerName?: string }
+  | { type: 'transcript_clear' }
   | { type: 'suspicion_update'; playerId: string; playerName: string; score: number; reason: string }
   | { type: 'behavioral_note'; playerName: string; note: string }
   | { type: 'bot_speech'; playerName: string; playerId: string; message: string }

@@ -8,9 +8,10 @@ interface VideoTileProps {
   isMuted?: boolean
   suspicion?: { score: number; reason: string }
   isSpeaking?: boolean
+  transcript?: string
 }
 
-export function VideoTile({ stream, name, isDead, isYou, isMuted, suspicion, isSpeaking }: VideoTileProps) {
+export function VideoTile({ stream, name, isDead, isYou, isMuted, suspicion, isSpeaking, transcript }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
 
   useEffect(() => {
@@ -63,31 +64,41 @@ export function VideoTile({ stream, name, isDead, isYou, isMuted, suspicion, isS
         </div>
       )}
 
-      {/* Suspicion bar */}
-      {suspicion && !isDead && (
-        <div className="absolute bottom-8 left-0 right-0 px-2">
-          <div className="flex items-center gap-1.5">
-            <div className="flex-1 h-1 bg-black/40 rounded-full overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all duration-500 ${
-                  suspicion.score >= 7 ? 'bg-red-500' :
-                  suspicion.score >= 4 ? 'bg-yellow-500' : 'bg-green-500'
-                }`}
-                style={{ width: `${suspicion.score * 10}%` }}
-              />
-            </div>
-            <span className={`text-[10px] font-bold ${
-              suspicion.score >= 7 ? 'text-red-400' :
-              suspicion.score >= 4 ? 'text-yellow-400' : 'text-green-400'
-            }`}>
-              {suspicion.score}
-            </span>
+      {/* Bottom overlay: transcript → suspicion bar → name */}
+      <div className="absolute bottom-0 left-0 right-0 flex flex-col">
+        {transcript && !isDead && (
+          <div className="px-2 pb-1">
+            <p className="text-[11px] text-white/90 bg-black/70 rounded px-2 py-1 leading-snug line-clamp-2">
+              {transcript}
+            </p>
           </div>
-        </div>
-      )}
+        )}
 
-      <div className="absolute bottom-0 left-0 right-0 px-[10px] py-[6px] bg-gradient-to-t from-black/80 to-transparent text-white text-[0.85rem] font-bold">
-        {name} {isYou && '(You)'}
+        {suspicion && !isDead && (
+          <div className="px-2 pb-1">
+            <div className="flex items-center gap-1.5">
+              <div className="flex-1 h-1 bg-black/40 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-500 ${
+                    suspicion.score >= 7 ? 'bg-red-500' :
+                    suspicion.score >= 4 ? 'bg-yellow-500' : 'bg-green-500'
+                  }`}
+                  style={{ width: `${suspicion.score * 10}%` }}
+                />
+              </div>
+              <span className={`text-[10px] font-bold ${
+                suspicion.score >= 7 ? 'text-red-400' :
+                suspicion.score >= 4 ? 'text-yellow-400' : 'text-green-400'
+              }`}>
+                {suspicion.score}
+              </span>
+            </div>
+          </div>
+        )}
+
+        <div className="px-[10px] py-[6px] bg-gradient-to-t from-black/80 to-transparent text-white text-[0.85rem] font-bold">
+          {name} {isYou && '(You)'}
+        </div>
       </div>
     </div>
   )

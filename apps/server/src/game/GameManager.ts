@@ -23,6 +23,7 @@ export class GameManager {
   private botNames: Set<string> = new Set()
   private botAgents: Map<string, BotAgent> = new Map()
   private dayStartedAt = 0
+  private fishjamPeerNames: Map<string, string> = new Map()
 
   constructor(roomId: string) {
     this.state = {
@@ -240,8 +241,8 @@ export class GameManager {
       }
     })
 
+    this.log('timing', `startGame: initGemini launched, waiting for bridge before startNight`)
     this.initGemini()
-    setTimeout(() => this.startNight(), GAME_CONSTANTS.ROLE_REVEAL_DELAY)
 
     return { ok: true }
   }
@@ -277,6 +278,11 @@ export class GameManager {
     this.fishjamRoomId = roomId
   }
 
+  mapFishjamPeer(peerId: string, playerName: string) {
+    this.log('peer', `Mapped Fishjam peerId ${peerId} → "${playerName}"`)
+    this.fishjamPeerNames.set(peerId, playerName)
+  }
+
   private async initGemini() {
     const apiKey = process.env.GEMINI_API_KEY
     const fishjamId = process.env.FISHJAM_URL?.match(/\/\/([^.]+)/)?.[1]
@@ -308,8 +314,10 @@ export class GameManager {
 
     this.bridge.on({
       // Forward transcripts to all clients + detect speakers + voice/function fallbacks
-      onTranscript: (speaker, text) => {
-        this.broadcastEvent({ type: 'transcript', speaker, text })
+      onTranscript: (speaker, text, speakerId) => {
+        const playerName = speakerId ? this.fishjamPeerNames.get(speakerId) : undefined
+        this.log('transcript', `speaker=${speaker} peerId=${speakerId ?? 'none'} resolvedName=${playerName ?? 'unknown'} text="${text.slice(0, 60)}"`)
+        this.broadcastEvent({ type: 'transcript', speaker, text, playerName })
         if (!text) return
 
         if (speaker === 'gemini') {
@@ -324,8 +332,18 @@ export class GameManager {
         }
 
         if (speaker === 'player') {
+          if (playerName) {
+            const player = this.state.players.find((p) => p.name === playerName)
+            if (player) this.broadcastEvent({ type: 'speaker_changed', speakerId: player.id })
+          }
           this.handleVoiceFallback(text)
         }
+      },
+
+      // Clear transcript on Gemini turn complete
+      onTurnComplete: () => {
+        this.log('timing', `turnComplete at ${Date.now()}`)
+        this.broadcastEvent({ type: 'transcript_clear' })
       },
 
       // Handle tool calls from Gemini
@@ -344,8 +362,15 @@ export class GameManager {
       { name: 'cast_vote', description: 'Record a vote', parameters: { type: 'OBJECT', properties: { voter: { type: 'STRING' }, target: { type: 'STRING' } }, required: ['voter', 'target'] } },
       { name: 'update_suspicion', description: 'Update suspicion level', parameters: { type: 'OBJECT', properties: { player: { type: 'STRING' }, score: { type: 'NUMBER' }, reason: { type: 'STRING' } }, required: ['player', 'score', 'reason'] } },
       { name: 'behavioral_note', description: 'Record behavior observation', parameters: { type: 'OBJECT', properties: { player: { type: 'STRING' }, note: { type: 'STRING' } }, required: ['player', 'note'] } },
+      { name: 'bot_speak', description: 'Make an AI bot player say something out loud during day discussion. Use this instead of narrating bot dialogue yourself.', parameters: { type: 'OBJECT', properties: { player: { type: 'STRING' }, message: { type: 'STRING' } }, required: ['player', 'message'] } },
     ]
 
+    this.log('timing', `initGemini START at ${Date.now()}`)
+    await this.bridge.start(this.fishjamRoomId, prompt, tools)
+    this.log('timing', `Bridge READY at ${Date.now()} — Fishjam+Gemini connected`)
+    this.log('gemini', 'AgentBridge started — Gemini is now a ghost peer in the room')
+
+    setTimeout(() => this.startNight(), GAME_CONSTANTS.ROLE_REVEAL_DELAY)
     await this.bridge.start(this.fishjamRoomId, prompt, tools, 'Orus', false)
     this.log('gemini', 'AgentBridge started — Game Master is now AUDIBLE')
   }
@@ -509,6 +534,7 @@ export class GameManager {
           message: cmd.message,
         })
         this.broadcastEvent({ type: 'speaker_changed', speakerId: player.id })
+        this.broadcastEvent({ type: 'transcript', speaker: 'player', text: cmd.message, playerName: player.name })
         break
       }
 
@@ -848,6 +874,7 @@ export class GameManager {
 
   startNight() {
     this.resolving = false
+    this.log('timing', `startNight at ${Date.now()}`)
     this.log('phase', `→ NIGHT ${this.state.day}`)
     this.log('gemini', `Session alive: ${this.bridge?.isAlive() ?? 'no session'}`)
     this.state.phase = 'night'
@@ -990,12 +1017,18 @@ export class GameManager {
       }
     }
 
-    // Delay day start to let Gemini finish processing
-    setTimeout(() => this.startDay(eliminatedId), 3000)
+    // Wait for narrator to finish before starting day
+    this.log('timing', `resolveNight done at ${Date.now()} — awaiting turnComplete before startDay`)
+    if (this.bridge) {
+      this.bridge.afterNarratorFinishes(() => this.startDay(eliminatedId))
+    } else {
+      setTimeout(() => this.startDay(eliminatedId), 3000)
+    }
   }
 
   startDay(eliminatedId: string | null) {
     this.resolving = false
+    this.log('timing', `startDay at ${Date.now()}`)
     const eliminatedName = eliminatedId
       ? this.state.players.find((p) => p.id === eliminatedId)?.name
       : null
@@ -1031,8 +1064,8 @@ export class GameManager {
     const humanNames = aliveHumans.map((p) => p.name).join(', ')
 
     const dayMsg = eliminatedId
-      ? `Day ${this.state.day}. ${eliminatedName} was killed. They were ${this.state.players.find((p) => p.id === eliminatedId)?.role}. Alive: ${alivePlayers.map((p) => p.name).join(', ')}. Announce the death, then start discussion.`
-      : `Day ${this.state.day}. Nobody died — doctor saved them! Alive: ${alivePlayers.map((p) => p.name).join(', ')}. Announce this, then start discussion.`
+      ? `Day ${this.state.day}. ${eliminatedName} was killed. They were ${this.state.players.find((p) => p.id === eliminatedId)?.role}. Alive: ${alivePlayers.map((p) => p.name).join(', ')}. Dramatically announce the death (3-5 sentences). Finish your full announcement before addressing any player.`
+      : `Day ${this.state.day}. Nobody died — doctor saved them! Alive: ${alivePlayers.map((p) => p.name).join(', ')}. Dramatically announce that everyone survived (3-5 sentences). Finish your full announcement before addressing any player.`
 
     this.bridge?.sendText(`[SYSTEM] ${dayMsg}`)
     this.log('gemini', `Day message sent. Session alive: ${this.bridge?.isAlive()}`)
@@ -1068,6 +1101,7 @@ export class GameManager {
     }
 
     this.resolving = false
+    this.log('timing', `startVoting at ${Date.now()}`)
     this.state.phase = 'voting'
     this.votes.clear()
 
@@ -1085,7 +1119,7 @@ export class GameManager {
     })
 
     this.bridge?.sendText(
-      `[SYSTEM] Voting time! Alive players: ${aliveList}. Call each player by name and ask who they want to eliminate. After each player answers, call the cast_vote function. After all players have voted, the system will resolve automatically.`
+      `[SYSTEM] Voting time! Alive players: ${aliveList}. First announce that voting begins (2-3 dramatic sentences). Then call each player by name and ask who they want to eliminate. After each player answers, call the cast_vote function. After all players have voted, the system will resolve automatically.`
     )
 
     // Run bot votes after 5 seconds
@@ -1176,7 +1210,12 @@ export class GameManager {
           ? `[SYSTEM] Vote result: ${eliminatedPlayer.name} was eliminated by vote. They were ${eliminatedPlayer.role}. Announce this dramatically. Then prepare for night.`
           : `[SYSTEM] Vote result: No one was eliminated (no votes or tie). Announce this. Then prepare for night.`
       )
-      setTimeout(() => this.startNight(), GAME_CONSTANTS.ROLE_REVEAL_DELAY)
+      this.log('timing', `resolveVoting done at ${Date.now()} — awaiting turnComplete before startNight`)
+      if (this.bridge) {
+        this.bridge.afterNarratorFinishes(() => this.startNight())
+      } else {
+        setTimeout(() => this.startNight(), GAME_CONSTANTS.ROLE_REVEAL_DELAY)
+      }
     }
   }
 
