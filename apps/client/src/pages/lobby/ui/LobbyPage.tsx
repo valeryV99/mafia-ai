@@ -4,9 +4,8 @@ import { useGameStore } from '@/entities/game'
 import { JoinForm } from '@/features/join-game'
 import type { RoomInfo } from '@mafia-ai/types'
 
-const SERVER_URL = import.meta.env.VITE_SERVER_WS_URL
-  ? import.meta.env.VITE_SERVER_WS_URL.replace(/^ws/, 'http').replace('/ws', '')
-  : 'http://localhost:3001'
+const WS_URL = import.meta.env.VITE_SERVER_WS_URL || 'wss://server-production-dd31.up.railway.app/ws'
+const SERVER_URL = WS_URL.replace(/^ws/, 'http').replace('/ws', '')
 
 const PHASE_LABEL: Record<string, string> = {
   lobby: 'Waiting',
