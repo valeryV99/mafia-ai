@@ -26,7 +26,6 @@ export function AddAiPlayerButton() {
       const data = await res.json()
       if (data.added) {
         setAdded(true)
-        console.log(`[AI] Voice agent "${data.name}" joined the game`)
       } else {
         console.error('[AI] Failed to add voice agent:', data.error)
       }

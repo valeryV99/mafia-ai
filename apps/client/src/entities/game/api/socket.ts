@@ -34,9 +34,9 @@ export function useGameSocket() {
       ws.current = socket
 
       socket.onopen = () => {
-        console.log('Connected to server')
         isConnecting.current = false
         retriesRef.current = 0
+        console.log(`[WS] Connected to ${WS_URL}`)
 
         // Flush pending messages
         for (const msg of pendingMessages.current) {
@@ -63,8 +63,6 @@ export function useGameSocket() {
 
         const { setGameState, setPlayerId, setMyRole, setFishjamToken, addVote, clearVotes } = useGameStore.getState()
 
-        console.log(`%c[WS] ${msg.type}`, 'color: #888', 'players:', (msg as any).state?.players?.length ?? '-')
-
         switch (msg.type) {
           case 'room_joined':
             setPlayerId(msg.playerId)
@@ -72,10 +70,10 @@ export function useGameSocket() {
             useGameStore.getState().setActiveVoiceAgent(msg.state.activeVoiceAgentId ?? null)
             useGameStore.getState().setAgentsMuted(msg.state.agentsMuted ?? false)
             useGameStore.getState().setSelectedAgentIds(msg.state.selectedAgentIds ?? [])
-            console.log('%c[WS] Joined as', 'color: #4ade80', msg.playerId, 'players:', msg.state.players.map((p: any) => p.name))
             if (msg.fishjamToken) {
               setFishjamToken(msg.fishjamToken)
             }
+            console.log(`[WS] Joined room as playerId=${msg.playerId}, phase=${msg.state.phase}, players=${msg.state.players.length}`)
             break
           case 'game_started':
             setGameState(msg.state)
@@ -86,6 +84,7 @@ export function useGameSocket() {
             setMyRole(msg.role)
             break
           case 'phase_changed': {
+            console.log(`[WS] Phase → ${msg.phase}`)
             setGameState(msg.state)
             useGameStore.getState().setAgentsMuted(msg.state.agentsMuted ?? false)
             useGameStore.getState().setSelectedAgentIds(msg.state.selectedAgentIds ?? [])
@@ -99,8 +98,6 @@ export function useGameSocket() {
             }
             // Close any open night action window when leaving night phase
             if (msg.phase !== 'night') useGameStore.getState().setNightActionWindowOpen(false)
-            console.log(`%c[Phase] → ${msg.phase} at ${Date.now()}`, 'color: #34d399; font-weight: bold')
-
             // Cancel previous safety timer (from earlier phase)
             if (narratorSafetyTimer.current) {
               clearTimeout(narratorSafetyTimer.current)
@@ -112,12 +109,10 @@ export function useGameSocket() {
             if (phasesWithNarrator.includes(msg.phase)) {
               narratorFreezeTime.current = Date.now()
               useGameStore.getState().setNarratorSpeaking(true)
-              console.log(`%c[Timer] FROZEN → ${msg.phase} at t=0`, 'color: #818cf8; font-weight: bold')
               // Safety: unfreeze if narrator never fires turnComplete within 12s
               narratorSafetyTimer.current = setTimeout(() => {
                 if (useGameStore.getState().isNarratorSpeaking) {
                   useGameStore.getState().setNarratorSpeaking(false)
-                  console.log(`%c[Timer] Safety reset (phase: ${msg.phase})`, 'color: #ef4444; font-weight: bold')
                 }
               }, 12_000)
             }
@@ -140,11 +135,9 @@ export function useGameSocket() {
             const gameState = useGameStore.getState().gameState
             const voterName = gameState?.players.find((p) => p.id === msg.fromId)?.name || msg.fromId
             const targetName = gameState?.players.find((p) => p.id === msg.targetId)?.name || msg.targetId
-            console.log(`%c[Vote] ${voterName} → ${targetName}`, 'color: #e11d48; font-weight: bold')
             break
           }
           case 'vote_result':
-            console.log('Vote result:', msg.eliminatedId, msg.votes)
             break
           case 'speaker_changed': {
             const { setCurrentSpeaker } = useGameStore.getState()
@@ -153,19 +146,16 @@ export function useGameSocket() {
           }
           case 'night_action_prompt': {
             useGameStore.getState().setNightActionWindowOpen(true)
-            console.log(`%c[Night] Action window OPEN (${msg.role})`, 'color: #c084fc; font-weight: bold')
             break
           }
           case 'night_action_received': {
             useGameStore.getState().setNightActionWindowOpen(false)
             useGameStore.getState().setNightActionSubmitted(true)
-            console.log(`%c[Night] Action window CLOSED — action confirmed`, 'color: #c084fc; font-weight: bold')
             break
           }
           case 'investigation_result': {
             const { setInvestigationResult } = useGameStore.getState()
             setInvestigationResult({ targetName: msg.targetName, targetRole: msg.targetRole })
-            console.log(`%c[Investigation] ${msg.targetName} is ${msg.targetRole}`, 'color: #a78bfa; font-weight: bold')
             break
           }
           case 'transcript': {
@@ -175,17 +165,15 @@ export function useGameSocket() {
                 .replace(/`\w+\([^`]*\)`/g, '')
                 .replace(/<ctrl\d+>/g, '')
                 .trim()
-              const wasAlreadySpeaking = useGameStore.getState().isNarratorSpeaking
               setNarratorSpeaking(true)
-              if (clean) appendGeminiTranscript(clean)
-              if (!wasAlreadySpeaking && clean) {
-                console.log(`%c[Narrator] speaking`, 'color: #fbbf24; font-weight: bold')
+              if (clean) {
+                appendGeminiTranscript(clean)
+                console.log(`[GM] Said: "${clean.slice(0, 120)}"`)
               }
             } else {
               const label = msg.playerName ?? 'Unknown'
+              console.log(`[MIC] Server heard ${label}: "${msg.text.slice(0, 120)}"`)
               appendPlayerTranscript(label, msg.text)
-              console.log(`%c[STT] ${label}: "${msg.text}"`, 'color: #60a5fa; font-weight: bold')
-
               // Reset debounced clear timer for this player
               const existing = playerClearTimers.current.get(label)
               if (existing) clearTimeout(existing)
@@ -203,30 +191,24 @@ export function useGameSocket() {
             setNarratorSpeaking(false)
             const frozenFor = narratorFreezeTime.current ? Math.round((Date.now() - narratorFreezeTime.current) / 1000) : '?'
             narratorFreezeTime.current = null
-            console.log(`%c[Narrator] DONE (turnComplete) — narrator spoke for ${frozenFor}s`, 'color: #f59e0b; font-weight: bold')
-            console.log(`%c[Timer] RESUMED — server timeout already ran for ${frozenFor}s`, 'color: #34d399; font-weight: bold')
             break
           }
           case 'suspicion_update': {
             const { updateSuspicion } = useGameStore.getState()
             updateSuspicion(msg.playerId, msg.score, msg.reason)
-            console.log(`%c[Suspicion] ${msg.playerName}: ${msg.score}/10 — ${msg.reason}`, 'color: #f97316; font-weight: bold')
             break
           }
           case 'behavioral_note': {
             const { addBehavioralNote } = useGameStore.getState()
             addBehavioralNote(msg.playerName, msg.note)
-            console.log(`%c[Behavior] ${msg.playerName}: ${msg.note}`, 'color: #ec4899')
             break
           }
           case 'agent_mute_changed': {
             useGameStore.getState().setActiveVoiceAgent(msg.activeAgentId)
-            console.log(`%c[Agent] Active voice agent: ${msg.activeAgentId ?? 'none'}`, 'color: #a78bfa; font-weight: bold')
             break
           }
           case 'agents_mute_changed': {
             useGameStore.getState().setAgentsMuted(msg.muted)
-            console.log(`%c[Agent] All agents ${msg.muted ? 'MUTED' : 'UNMUTED'}`, 'color: #a78bfa; font-weight: bold')
             break
           }
           case 'agent_selection_changed': {
@@ -243,18 +225,20 @@ export function useGameSocket() {
       }
 
       socket.onerror = (error) => {
-        console.error('WebSocket error:', error)
+        console.error('[WS] WebSocket error:', error)
       }
 
-      socket.onclose = () => {
-        console.log('Disconnected from server')
+      socket.onclose = (event) => {
         isConnecting.current = false
         ws.current = null
+        console.warn(`[WS] Disconnected (code=${event.code}, reason="${event.reason || 'none'}", intentional=${intentionalClose.current})`)
 
         if (!intentionalClose.current && retriesRef.current < MAX_RECONNECT_RETRIES) {
           retriesRef.current += 1
-          console.log(`Reconnecting in ${RECONNECT_DELAY_MS}ms (attempt ${retriesRef.current}/${MAX_RECONNECT_RETRIES})...`)
+          console.log(`[WS] Reconnecting... attempt ${retriesRef.current}/${MAX_RECONNECT_RETRIES}`)
           reconnectTimeout.current = setTimeout(connect, RECONNECT_DELAY_MS)
+        } else if (!intentionalClose.current) {
+          console.error('[WS] Max reconnect retries reached — gave up')
         }
       }
     }
