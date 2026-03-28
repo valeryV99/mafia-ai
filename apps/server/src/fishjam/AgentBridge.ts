@@ -18,6 +18,7 @@ export class AgentBridge {
   private agentTrackId: string | null = null
   private geminiSession: Session | null = null
   private callbacks: AgentBridgeCallbacks = {}
+  private muteOutput = false
 
   // VAD floor control
   private activeSpeakerId: string | null = null
@@ -30,8 +31,10 @@ export class AgentBridge {
     log('init', 'AgentBridge created')
   }
 
-  async start(roomId: string, systemPrompt: string, tools?: object[]): Promise<void> {
+  async start(roomId: string, systemPrompt: string, tools?: object[], voiceName: string = 'Orus', muteOutput: boolean = false): Promise<void> {
     log('start', `Joining room ${roomId.slice(0, 20)}...`)
+
+    this.muteOutput = muteOutput
 
     // 1. Create Fishjam Agent (ghost peer)
     const { agent } = await this.fishjamClient.createAgent(roomId as any, {
@@ -48,11 +51,12 @@ export class AgentBridge {
     log('start', `Agent track created: ${agentTrack.id}`)
 
     // 3. Connect to Gemini Live
+    // UPDATE the sessionConfig to use the passed voiceName
     const sessionConfig: any = {
       responseModalities: [Modality.AUDIO],
       speechConfig: {
         voiceConfig: {
-          prebuiltVoiceConfig: { voiceName: 'Orus' },
+          prebuiltVoiceConfig: { voiceName: voiceName }, // <-- Changed here
         },
       },
     }
@@ -83,11 +87,7 @@ export class AgentBridge {
     let audioChunkCount = 0
     agent.on('trackData', (event: any) => {
       const { peerId, data } = event
-      if (audioChunkCount++ % 100 === 0) {
-        log('audio', `Received chunk #${audioChunkCount} from peer ${peerId} (${data.length} bytes)`)
-      }
 
-      // VAD mutex floor control: only one speaker at a time
       if (this.activeSpeakerId === null) {
         // Check if audio has voice (simple energy check)
         if (this.hasVoice(data)) {
@@ -121,9 +121,10 @@ export class AgentBridge {
   }
 
   private handleGeminiMessage(msg: any) {
-    // Audio response from model turn parts → send to agent track
     const parts = msg.serverContent?.modelTurn?.parts
-    if (parts && this.agent && this.agentTrackId) {
+
+    // CRITICAL: Only send audio to Fishjam if muteOutput is FALSE
+    if (!this.muteOutput && parts && this.agent && this.agentTrackId) {
       for (const part of parts) {
         if (part.inlineData?.data) {
           const pcmData = Buffer.from(part.inlineData.data, 'base64')
@@ -180,7 +181,6 @@ export class AgentBridge {
 
   // Simple voice activity detection based on audio energy
   private hasVoice(data: Uint8Array): boolean {
-    // Copy to aligned buffer to avoid RangeError with protobuf data
     const aligned = new Uint8Array(data.length)
     aligned.set(data)
     if (aligned.length < 2) return false
@@ -190,7 +190,11 @@ export class AgentBridge {
       energy += Math.abs(int16[i])
     }
     const avgEnergy = energy / int16.length
-    return avgEnergy > 500
+
+    // DEBUG: Uncomment this to see the numbers in your console
+    // if (avgEnergy > 50) console.log(`[VAD] Energy: ${avgEnergy.toFixed(0)}`)
+
+    return avgEnergy > 50 // <-- Lowered from 500 to 150
   }
 
   sendText(message: string) {

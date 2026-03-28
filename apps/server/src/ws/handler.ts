@@ -133,6 +133,15 @@ export async function handleClientEvent(
       break
     }
 
+    case 'add_voice_agent': {
+      console.log(`[WS] add_voice_agent received from ${ws.data.playerId}`)
+      const game = findGameByPlayer(ws.data.playerId)
+      if (game) {
+        game.addVoiceAgent('Alex')
+      }
+      break
+    }
+
     default: {
       ws.send(JSON.stringify({ type: 'error', message: `Unknown event type: ${(event as any).type}` }))
       break

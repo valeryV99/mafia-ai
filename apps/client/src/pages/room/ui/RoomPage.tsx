@@ -259,6 +259,12 @@ export function RoomPage() {
         {isLobby && (
           <div className="flex flex-col items-center gap-3 mt-5">
             <button
+              onClick={() => send({ type: 'add_voice_agent' })}
+              className="px-6 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold transition-colors"
+            >
+              + Add Voice Agent
+            </button>
+            <button
               onClick={async () => {
                 const res = await fetch(`http://localhost:3001/rooms/${roomId}/bots`, {
                   method: 'POST',

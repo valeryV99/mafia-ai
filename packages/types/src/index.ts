@@ -55,3 +55,4 @@ export type ClientEvent =
   | { type: 'night_action'; targetId: string }
   | { type: 'text_command'; text: string }
   | { type: 'face_metrics'; stress: number; surprise: number; happiness: number; lookingAway: boolean }
+  | { type: 'add_voice_agent' }

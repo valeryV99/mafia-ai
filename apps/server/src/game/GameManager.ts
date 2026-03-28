@@ -4,6 +4,7 @@ import { AgentBridge } from '../fishjam/AgentBridge'
 import { buildGameMasterPrompt } from '../gemini/prompts'
 import { GAME_CONSTANTS } from './constants'
 import { BotAgent } from './BotAgent'
+import {VoiceAgent} from "./VoiceAgent";
 
 const log = (roomId: string, tag: string, ...args: unknown[]) =>
   console.log(`[Game:${roomId}][${tag}]`, ...args)
@@ -106,6 +107,69 @@ export class GameManager {
     return player
   }
 
+  private voiceAgents: Map<string, VoiceAgent> = new Map()
+
+  // Add this new method
+  async addVoiceAgent(name: string = 'Alex') {
+    const apiKey = process.env.GEMINI_API_KEY
+    const fishjamId = process.env.FISHJAM_URL?.match(/\/\/([^.]+)/)?.[1]
+    const managementToken = process.env.FISHJAM_MANAGEMENT_TOKEN
+
+    if (!apiKey || !fishjamId || !managementToken) {
+      this.log('voiceAgent', 'Missing credentials, skipping')
+      return { error: 'Missing credentials' }
+    }
+
+    if (!this.fishjamRoomId) {
+      this.log('voiceAgent', 'No Fishjam room ID set, skipping')
+      return { error: 'Room not initialized' }
+    }
+
+    const player = this.addBot(name)
+
+    // 2. Define the tools available to a player
+    const playerTools = [
+      {
+        name: 'cast_vote',
+        description: 'Vote for a player to be eliminated during the voting phase',
+        parameters: { type: 'OBJECT', properties: { target: { type: 'STRING' } }, required: ['target'] }
+      },
+      {
+        name: 'night_kill',
+        description: 'Mafia only: Choose a player to kill at night',
+        parameters: { type: 'OBJECT', properties: { target: { type: 'STRING' } }, required: ['target'] }
+      }
+    ]
+
+    const agent = new VoiceAgent(name, apiKey, fishjamId, managementToken)
+
+    // 3. Join with the action handler
+    await agent.join(
+        this.fishjamRoomId,
+        player.role,
+        playerTools,
+        (name, args) => {
+          // We reuse the existing GM command handler!
+          // We just need to make sure the "voter" is Alex
+          this.handleGeminiCommand({
+            action: name,
+            voter: player.name, // Force Alex as the voter
+            target: args.target
+          } as any)
+        }
+    )
+
+    this.voiceAgents.set(name, agent)
+    // Broadcast the updated state so the frontend shows the new player
+    this.broadcastEvent({
+      type: 'phase_changed',
+      phase: this.state.phase,
+      state: this.getPublicState(),
+    })
+
+    return { ok: true, player }
+  }
+
   isBot(name: string): boolean {
     return this.botNames.has(name)
   }
@@ -166,7 +230,8 @@ export class GameManager {
       this.sendToPlayer(player.id, { type: 'role_assigned', role: player.role })
 
       // Create bot agents
-      if (this.isBot(player.name)) {
+      // FIX: Only create a BotAgent if there isn't already a VoiceAgent with this name
+      if (this.isBot(player.name) && !this.voiceAgents.has(player.name)) {
         const apiKey = process.env.GEMINI_API_KEY
         if (apiKey) {
           const agent = new BotAgent(player.name, player.role, personalities[i % personalities.length], apiKey)
@@ -281,8 +346,8 @@ export class GameManager {
       { name: 'behavioral_note', description: 'Record behavior observation', parameters: { type: 'OBJECT', properties: { player: { type: 'STRING' }, note: { type: 'STRING' } }, required: ['player', 'note'] } },
     ]
 
-    await this.bridge.start(this.fishjamRoomId, prompt, tools)
-    this.log('gemini', 'AgentBridge started — Gemini is now a ghost peer in the room')
+    await this.bridge.start(this.fishjamRoomId, prompt, tools, 'Orus', false)
+    this.log('gemini', 'AgentBridge started — Game Master is now AUDIBLE')
   }
 
   private handleGeminiCommand(cmd: Record<string, string>) {
@@ -683,7 +748,7 @@ export class GameManager {
       agent.addMemory(context)
 
       // Show speaker indicator
-      this.broadcastEvent({ type: 'speaker_changed', speakerId: bot.id })
+      //this.broadcastEvent({ type: 'speaker_changed', speakerId: bot.id })
 
       const response = await agent.generateResponse(context)
       if (!response) continue
@@ -1157,6 +1222,11 @@ export class GameManager {
     this.log('cleanup', 'Cleaning up game resources')
     this.bridge?.disconnect()
     this.bridge = null
+
+    // Disconnect all voice agents
+    this.voiceAgents.forEach(agent => agent.disconnect())
+    this.voiceAgents.clear()
+
     if (this.nightTimeout) { clearTimeout(this.nightTimeout); this.nightTimeout = null }
     if (this.dayTimeout) { clearTimeout(this.dayTimeout); this.dayTimeout = null }
     if (this.votingTimeout) { clearTimeout(this.votingTimeout); this.votingTimeout = null }
