@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useCallback } from 'react'
 
 interface VideoTileProps {
   stream: MediaStream | null | undefined
@@ -10,21 +10,116 @@ interface VideoTileProps {
   isSpeaking?: boolean
   transcript?: string
   stressLevel?: number
+  phase?: string
 }
 
-export function VideoTile({ stream, name, isDead, isYou, isMuted, suspicion, isSpeaking, transcript, stressLevel = 0 }: VideoTileProps) {
+export function VideoTile({ stream, name, isDead, isYou, isMuted, suspicion, isSpeaking, transcript, stressLevel = 0, phase }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const animRef = useRef<number>(0)
 
+  // Attach raw stream to hidden video element
   useEffect(() => {
     if (videoRef.current && stream) {
       videoRef.current.srcObject = stream
     }
     return () => {
-      if (videoRef.current) {
-        videoRef.current.srcObject = null
-      }
+      if (videoRef.current) videoRef.current.srcObject = null
     }
   }, [stream])
+
+  // Canvas render loop — draws video + effects each frame
+  const renderFrame = useCallback(() => {
+    const canvas = canvasRef.current
+    const video = videoRef.current
+    if (!canvas || !video || video.readyState < 2) {
+      animRef.current = requestAnimationFrame(renderFrame)
+      return
+    }
+
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    // Match canvas size to video
+    if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+      canvas.width = video.videoWidth || 320
+      canvas.height = video.videoHeight || 240
+    }
+
+    const w = canvas.width
+    const h = canvas.height
+
+    // 1. Draw base video
+    ctx.drawImage(video, 0, 0, w, h)
+
+    // 2. Death: grayscale + darken
+    if (isDead) {
+      const imageData = ctx.getImageData(0, 0, w, h)
+      const d = imageData.data
+      for (let i = 0; i < d.length; i += 4) {
+        const gray = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114
+        d[i] = gray; d[i + 1] = gray; d[i + 2] = gray
+      }
+      ctx.putImageData(imageData, 0, 0)
+      ctx.globalAlpha = 0.4
+      ctx.fillStyle = '#000'
+      ctx.fillRect(0, 0, w, h)
+      ctx.globalAlpha = 1
+      // Skull
+      ctx.font = `${Math.min(w, h) * 0.3}px serif`
+      ctx.textAlign = 'center'
+      ctx.fillText('💀', w / 2, h / 2 + 10)
+    }
+
+    // 3. Night tint
+    if (phase === 'night' && !isDead) {
+      ctx.globalAlpha = 0.3
+      ctx.fillStyle = '#050520'
+      ctx.fillRect(0, 0, w, h)
+      ctx.globalAlpha = 1
+    }
+
+    // 4. Stress effects
+    if (stressLevel > 0.3 && !isDead) {
+      const intensity = Math.min(1, (stressLevel - 0.3) / 0.7)
+      const pulse = Math.sin(Date.now() / 300) * 0.3 + 0.7
+
+      // Red vignette
+      const gradient = ctx.createRadialGradient(w / 2, h / 2, w * 0.2, w / 2, h / 2, w * 0.55)
+      gradient.addColorStop(0, 'transparent')
+      gradient.addColorStop(1, `rgba(220, 38, 38, ${intensity * 0.35 * pulse})`)
+      ctx.fillStyle = gradient
+      ctx.fillRect(0, 0, w, h)
+
+      // Emoji
+      const emoji = stressLevel > 0.6 ? '😱' : '😰'
+      const size = 20 + intensity * 14
+      const bounce = Math.sin(Date.now() / 200) * 3
+      ctx.font = `${size}px serif`
+      ctx.textAlign = 'right'
+      ctx.shadowColor = 'rgba(239, 68, 68, 0.9)'
+      ctx.shadowBlur = 8
+      ctx.fillText(emoji, w - 6, 28 + bounce)
+      ctx.shadowBlur = 0
+    }
+
+    // 5. Speaking glow border
+    if (isSpeaking && !isDead) {
+      ctx.strokeStyle = 'rgba(74, 222, 128, 0.8)'
+      ctx.lineWidth = 4
+      ctx.strokeRect(2, 2, w - 4, h - 4)
+    }
+
+    animRef.current = requestAnimationFrame(renderFrame)
+  }, [isDead, stressLevel, phase, isSpeaking])
+
+  // Start/stop render loop
+  useEffect(() => {
+    if (stream) {
+      animRef.current = requestAnimationFrame(renderFrame)
+    }
+    return () => cancelAnimationFrame(animRef.current)
+  }, [stream, renderFrame])
 
   function getBorderStyle() {
     if (isDead) return 'border-[#444]'
@@ -38,40 +133,27 @@ export function VideoTile({ stream, name, isDead, isYou, isMuted, suspicion, isS
   const borderColor = getBorderStyle()
 
   return (
-    <div className={`relative rounded-xl overflow-hidden bg-[#1a1a2e] aspect-[4/3] border-2 transition-all duration-300 ${borderColor} ${isDead ? 'opacity-50' : ''}`}>
-      {stream ? (
+    <div className={`relative rounded-xl overflow-hidden bg-[#1a1a2e] aspect-[4/3] border-2 transition-all duration-300 ${borderColor} ${isDead ? 'opacity-60' : ''}`}>
+      {/* Hidden video element — source for canvas */}
+      {stream && (
         <video
           ref={videoRef}
           autoPlay
           playsInline
           muted={isYou || isMuted}
-          className={`w-full h-full object-cover ${isDead ? 'grayscale' : ''}`}
+          className="hidden"
+        />
+      )}
+
+      {/* Canvas with real-time effects */}
+      {stream ? (
+        <canvas
+          ref={canvasRef}
+          className="w-full h-full object-cover"
         />
       ) : (
         <div className="w-full h-full flex items-center justify-center text-[2.5rem]">
           {isDead ? '💀' : '🎭'}
-        </div>
-      )}
-
-      {/* Speaking indicator */}
-      {isSpeaking && !isDead && (
-        <div className="absolute top-1 left-1 bg-green-500/90 text-white text-[9px] px-1.5 py-0.5 rounded font-bold flex items-center gap-1">
-          <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" />
-          SPEAKING
-        </div>
-      )}
-
-      {/* SUS badge for high suspicion */}
-      {suspicion && suspicion.score >= 7 && !isDead && (
-        <div className="absolute top-1 right-1 bg-red-600/90 text-white text-[9px] px-1.5 py-0.5 rounded font-bold">
-          SUS
-        </div>
-      )}
-
-      {/* Stress panic indicator */}
-      {stressLevel > 0.3 && !isDead && (
-        <div className={`absolute top-1 ${suspicion && suspicion.score >= 7 ? 'right-10' : 'right-1'} text-lg animate-bounce drop-shadow-[0_0_6px_rgba(239,68,68,0.8)]`}>
-          {stressLevel > 0.6 ? '😱' : '😰'}
         </div>
       )}
 
