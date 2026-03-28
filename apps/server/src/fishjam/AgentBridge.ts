@@ -93,9 +93,9 @@ export class AgentBridge {
         outputAudioTranscription: {},
       },
       callbacks: {
-        onopen: () => this.log('gemini', 'Session opened'),
-        onclose: (e: any) => this.log('gemini', `Session closed: ${e?.code || 'unknown'}`),
-        onerror: (e: any) => this.log('gemini', 'Error:', e),
+        onopen: () => this.log('gemini', `Session OPENED for ${this.name}`),
+        onclose: (e: any) => this.log('gemini', `Session CLOSED for ${this.name}: code=${e?.code || 'unknown'} reason=${e?.reason || 'none'}`),
+        onerror: (e: any) => this.log('gemini', `Session ERROR for ${this.name}:`, e?.message || e),
         onmessage: (msg: any) => this.handleGeminiMessage(msg),
       },
     })
@@ -202,11 +202,13 @@ export class AgentBridge {
     // Tool calls — batch all responses in one sendToolResponse
     if (msg.toolCall) {
       const functionCalls = msg.toolCall.functionCalls || []
+      this.log('toolCall', `[${this.name}] Received ${functionCalls.length} tool call(s): ${functionCalls.map((fc: any) => fc.name).join(', ')}`)
       for (const fc of functionCalls) {
-        this.log('toolCall', `${fc.name}(${JSON.stringify(fc.args)})`)
+        this.log('toolCall', `[${this.name}] → ${fc.name}(${JSON.stringify(fc.args)}) muteIn=${this.muteInput} muteOut=${this.muteOutput}`)
         this.callbacks.onToolCall?.(fc.name, fc.args || {})
       }
       if (functionCalls.length > 0) {
+        this.log('toolCall', `[${this.name}] Sending tool response for ${functionCalls.length} call(s)`)
         this.geminiSession?.sendToolResponse({
           functionResponses: functionCalls.map((fc: any) => ({
             id: fc.id, name: fc.name, response: { success: true },
@@ -247,14 +249,14 @@ export class AgentBridge {
     const isTurnComplete = msg.serverContent?.turnComplete || (msg as any).turnComplete
     if (isTurnComplete) {
       const duration = Date.now() - this.narratorStartedAt
-      this.log('narrator', `DONE after ${(duration / 1000).toFixed(1)}s`)
+      this.log('turnComplete', `[${this.name}] turnComplete received after ${(duration / 1000).toFixed(1)}s, narratorSpeaking=${this.narratorSpeaking}, hasPendingTransition=${!!this.pendingPhaseTransition}`)
       this.narratorSpeaking = false
       this.callbacks.onTurnComplete?.()
       if (this.pendingPhaseTransition) {
         if (this.pendingPhaseTimeout) clearTimeout(this.pendingPhaseTimeout)
         const fn = this.pendingPhaseTransition
         this.pendingPhaseTransition = null
-        this.log('narrator', 'Firing pending phase transition')
+        this.log('turnComplete', `[${this.name}] Firing pending phase transition`)
         fn()
       }
     }
@@ -278,15 +280,17 @@ export class AgentBridge {
   }
 
   afterNarratorFinishes(fn: () => void) {
+    this.log('narrator', `[${this.name}] afterNarratorFinishes called — narratorSpeaking=${this.narratorSpeaking}, sessionAlive=${!!this.geminiSession}`)
     if (!this.narratorSpeaking) {
-      this.log('narrator', 'Already idle — firing transition immediately')
+      this.log('narrator', `[${this.name}] Already idle — firing transition in 100ms`)
       setTimeout(fn, 100)
       return
     }
     this.pendingPhaseTransition = fn
+    this.log('narrator', `[${this.name}] Waiting for turnComplete (timeout: ${this.PENDING_PHASE_TIMEOUT_MS / 1000}s)`)
     this.pendingPhaseTimeout = setTimeout(() => {
       if (this.pendingPhaseTransition === fn) {
-        this.log('narrator', `Pending transition timed out after ${this.PENDING_PHASE_TIMEOUT_MS}ms — forcing`)
+        this.log('narrator', `[${this.name}] Pending transition TIMED OUT after ${this.PENDING_PHASE_TIMEOUT_MS / 1000}s — forcing transition`)
         this.pendingPhaseTransition = null
         fn()
       }
@@ -294,27 +298,37 @@ export class AgentBridge {
   }
 
   sendText(message: string) {
-    this.log('sendText', message.slice(0, 100))
+    const sessionAlive = !!this.geminiSession
+    this.log('sendText', `[${this.name}] sessionAlive=${sessionAlive} muteIn=${this.muteInput} muteOut=${this.muteOutput} msg="${message.slice(0, 120)}"`)
+    if (!sessionAlive) {
+      this.log('sendText', `[${this.name}] WARNING: No Gemini session — message lost!`)
+      return
+    }
     try {
       this.geminiSession?.sendClientContent({
         turns: [{ role: 'user', parts: [{ text: message }] }],
         turnComplete: true,
       })
     } catch (err) {
-      this.log('sendText', 'ERROR:', err)
+      this.log('sendText', `[${this.name}] ERROR:`, err)
     }
   }
 
   // Inject context silently — model receives the info but does NOT generate a response
   sendSilentContext(message: string) {
-    this.log('sendSilentContext', message.slice(0, 100))
+    const sessionAlive = !!this.geminiSession
+    this.log('sendSilentContext', `[${this.name}] sessionAlive=${sessionAlive} msg="${message.slice(0, 120)}"`)
+    if (!sessionAlive) {
+      this.log('sendSilentContext', `[${this.name}] WARNING: No Gemini session — context lost!`)
+      return
+    }
     try {
       this.geminiSession?.sendClientContent({
         turns: [{ role: 'user', parts: [{ text: message }] }],
         turnComplete: false,
       })
     } catch (err) {
-      this.log('sendSilentContext', 'ERROR:', err)
+      this.log('sendSilentContext', `[${this.name}] ERROR:`, err)
     }
   }
 

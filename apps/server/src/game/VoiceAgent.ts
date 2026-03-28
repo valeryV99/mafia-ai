@@ -101,12 +101,20 @@ TOOLS USAGE:
     }
 
     sendContext(text: string) {
-        if (!this.isConnected) return
+        if (!this.isConnected) {
+            console.log(`[VoiceAgent:${this.name}] sendContext called but NOT connected — message lost: "${text.slice(0, 80)}"`)
+            return
+        }
+        console.log(`[VoiceAgent:${this.name}] sendContext: "${text.slice(0, 100)}"`)
         this.bridge.sendText(text)
     }
 
     sendSilentContext(text: string) {
-        if (!this.isConnected) return
+        if (!this.isConnected) {
+            console.log(`[VoiceAgent:${this.name}] sendSilentContext called but NOT connected — message lost: "${text.slice(0, 80)}"`)
+            return
+        }
+        console.log(`[VoiceAgent:${this.name}] sendSilentContext: "${text.slice(0, 100)}"`)
         this.bridge.sendSilentContext(text)
     }
 

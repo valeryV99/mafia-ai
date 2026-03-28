@@ -416,10 +416,18 @@ export class GameManager {
   }
 
   handleNightAction(playerId: string, targetId: string) {
-    if (this.state.phase !== 'night') return
+    this.log('night', `[UI-ACTION] playerId=${playerId} targetId=${targetId} phase=${this.state.phase}`)
+    if (this.state.phase !== 'night') {
+      this.log('night', `[UI-ACTION] Rejected — not night phase (phase=${this.state.phase})`)
+      return
+    }
     const player = this.state.players.find((p) => p.id === playerId && p.status === 'alive')
     const target = this.state.players.find((p) => p.id === targetId && p.status === 'alive')
-    if (!player || !target || player.id === target.id) return
+    if (!player || !target || player.id === target.id) {
+      this.log('night', `[UI-ACTION] Rejected — player=${player?.name ?? 'NOT FOUND'} target=${target?.name ?? 'NOT FOUND'} selfTarget=${player?.id === target?.id}`)
+      return
+    }
+    this.log('night', `[UI-ACTION] ${player.name}(${player.role}) → ${target.name}`)
 
     if (player.role === 'mafia') {
       this.mafiaVotes.set(playerId, targetId)
@@ -489,6 +497,8 @@ export class GameManager {
   }
 
   private handleGeminiCommand(cmd: Record<string, string>) {
+    this.log('command', `[GEMINI-CMD] action=${cmd.action} voter=${cmd.voter ?? 'N/A'} target=${cmd.target ?? 'N/A'} phase=${this.state.phase}`)
+
     const findAliveByName = (name: string) => {
       const lower = name?.toLowerCase()
       return this.state.players.find((p) => p.name.toLowerCase() === lower && p.status === 'alive')
@@ -792,13 +802,19 @@ export class GameManager {
     this.doctorTarget = null
     this.nightActions.clear()
     if (this.mafiaGraceTimer) { clearTimeout(this.mafiaGraceTimer); this.mafiaGraceTimer = null }
-    this.log('phase', `→ NIGHT ${this.state.day}`)
     this.state.phase = 'night'
     this.broadcastEvent({ type: 'phase_changed', phase: 'night', state: this.getPublicState() })
 
     const mafiaPlayers = this.state.players.filter((p) => p.role === 'mafia' && p.status === 'alive')
     const detective = this.state.players.find((p) => p.role === 'detective' && p.status === 'alive')
     const doctor = this.state.players.find((p) => p.role === 'doctor' && p.status === 'alive')
+
+    this.log('phase', `========== NIGHT ${this.state.day} ==========`)
+    this.log('phase', `Alive players: ${this.state.players.filter(p => p.status === 'alive').map(p => `${p.name}(${p.role},${this.isBot(p.name) ? 'bot' : 'human'})`).join(', ')}`)
+    this.log('phase', `Mafia: ${mafiaPlayers.map(p => `${p.name}(${this.isBot(p.name) ? 'bot' : 'human'})`).join(', ') || 'NONE'}`)
+    this.log('phase', `Detective: ${detective ? `${detective.name}(${this.isBot(detective.name) ? 'bot' : 'human'})` : 'DEAD/NONE'}`)
+    this.log('phase', `Doctor: ${doctor ? `${doctor.name}(${this.isBot(doctor.name) ? 'bot' : 'human'})` : 'DEAD/NONE'}`)
+    this.log('phase', `Bridge alive: ${this.bridge?.isAlive() ?? false}, VoiceAgents: ${this.voiceAgents.size}`)
 
     const roleInfo = (name: string | undefined, role: string) => {
       if (!name) return `No alive ${role}.`
@@ -823,43 +839,92 @@ export class GameManager {
     // Send direct night instructions to each VoiceAgent based on their role
     this.voiceAgents.forEach((agent, agentName) => {
       const player = this.state.players.find((p) => p.name === agentName && p.status === 'alive')
-      if (!player) return
+      if (!player) {
+        this.log('night', `[BOT-INSTRUCT] ${agentName} — skipping (dead or not found)`)
+        return
+      }
       const targets = this.state.players
         .filter((p) => p.status === 'alive' && p.name !== agentName)
         .map((p) => p.name).join(', ')
       if (player.role === 'mafia') {
+        this.log('night', `[BOT-INSTRUCT] Sending night_kill instruction to ${agentName}. Targets: ${targets}`)
         agent.sendContext(`[GAME] Night ${this.state.day}: You are Mafia. Call night_kill now. Choose from: ${targets}.`)
       } else if (player.role === 'detective') {
+        this.log('night', `[BOT-INSTRUCT] Sending investigate instruction to ${agentName}. Targets: ${targets}`)
         agent.sendContext(`[GAME] Night ${this.state.day}: You are the Detective. Call investigate now. Choose from: ${targets}.`)
       } else if (player.role === 'doctor') {
+        this.log('night', `[BOT-INSTRUCT] Sending doctor_save instruction to ${agentName}. Targets: ${targets}`)
         agent.sendContext(`[GAME] Night ${this.state.day}: You are the Doctor. Call doctor_save now. Choose from: ${targets}.`)
+      } else {
+        this.log('night', `[BOT-INSTRUCT] ${agentName} is ${player.role} — no night action`)
       }
     })
 
-    // Bot fallback: if a bot detective/doctor doesn't call their function within 12s,
-    // auto-assign a random target so the night doesn't stall waiting for slow Gemini responses
+    // Bot retry: re-send instructions at 8s if bot hasn't acted yet
+    setTimeout(() => {
+      if (this.state.phase !== 'night') return
+      this.voiceAgents.forEach((agent, agentName) => {
+        const player = this.state.players.find((p) => p.name === agentName && p.status === 'alive')
+        if (!player) return
+        const targets = this.state.players
+          .filter((p) => p.status === 'alive' && p.name !== agentName)
+          .map((p) => p.name).join(', ')
+        if (player.role === 'mafia' && !this.mafiaVotes.has(player.id)) {
+          this.log('night', `[BOT-RETRY] ${agentName} (mafia) hasn't called night_kill after 8s — resending`)
+          agent.sendContext(`[GAME] URGENT: You MUST call night_kill NOW. Pick one target from: ${targets}. Do NOT speak, just call the function.`)
+        }
+        if (player.role === 'detective' && this.detectiveTarget === null) {
+          this.log('night', `[BOT-RETRY] ${agentName} (detective) hasn't called investigate after 8s — resending`)
+          agent.sendContext(`[GAME] URGENT: You MUST call investigate NOW. Pick one target from: ${targets}. Do NOT speak, just call the function.`)
+        }
+        if (player.role === 'doctor' && this.doctorTarget === null) {
+          this.log('night', `[BOT-RETRY] ${agentName} (doctor) hasn't called doctor_save after 8s — resending`)
+          agent.sendContext(`[GAME] URGENT: You MUST call doctor_save NOW. Pick one target from: ${targets}. Do NOT speak, just call the function.`)
+        }
+      })
+    }, 8_000)
+
+    // Bot fallback: if a bot hasn't called their function within 15s,
+    // auto-assign a random target so the night doesn't stall
     setTimeout(() => {
       if (this.state.phase !== 'night') return
       const alivePlayers = this.state.players.filter((p) => p.status === 'alive')
+
+      // Mafia bot fallback (NEW — was missing before!)
+      const botMafia = this.state.players.filter((p) => p.role === 'mafia' && p.status === 'alive' && this.isBot(p.name))
+      for (const bot of botMafia) {
+        if (!this.mafiaVotes.has(bot.id)) {
+          const validTargets = alivePlayers.filter((p) => p.id !== bot.id)
+          const randomTarget = validTargets[Math.floor(Math.random() * validTargets.length)]
+          if (randomTarget) {
+            this.log('night', `[BOT-FALLBACK] Bot mafia ${bot.name} didn't act in 15s — auto-kill: ${randomTarget.name}`)
+            this.mafiaVotes.set(bot.id, randomTarget.id)
+          }
+        }
+      }
+
       const botDetective = this.state.players.find((p) => p.role === 'detective' && p.status === 'alive' && this.isBot(p.name))
       if (botDetective && this.detectiveTarget === null) {
-        const randomTarget = alivePlayers.find((p) => p.id !== botDetective.id)
+        const validTargets = alivePlayers.filter((p) => p.id !== botDetective.id)
+        const randomTarget = validTargets[Math.floor(Math.random() * validTargets.length)]
         if (randomTarget) {
-          this.log('night', `Bot detective fallback — auto-assigning target: ${randomTarget.name}`)
+          this.log('night', `[BOT-FALLBACK] Bot detective ${botDetective.name} didn't act in 15s — auto-investigate: ${randomTarget.name}`)
           this.detectiveTarget = randomTarget.id
-          this.checkAllNightActionsComplete()
         }
       }
+
       const botDoctor = this.state.players.find((p) => p.role === 'doctor' && p.status === 'alive' && this.isBot(p.name))
       if (botDoctor && this.doctorTarget === null) {
-        const randomTarget = alivePlayers.find((p) => p.id !== botDoctor.id)
+        const validTargets = alivePlayers.filter((p) => p.id !== botDoctor.id)
+        const randomTarget = validTargets[Math.floor(Math.random() * validTargets.length)]
         if (randomTarget) {
-          this.log('night', `Bot doctor fallback — auto-assigning target: ${randomTarget.name}`)
+          this.log('night', `[BOT-FALLBACK] Bot doctor ${botDoctor.name} didn't act in 15s — auto-save: ${randomTarget.name}`)
           this.doctorTarget = randomTarget.id
-          this.checkAllNightActionsComplete()
         }
       }
-    }, 12_000)
+
+      this.checkAllNightActionsComplete()
+    }, 15_000)
 
     // When narrator finishes → start night timer (so client and server timers are in sync)
     this.pendingPhaseTransition = () => {
@@ -883,10 +948,23 @@ export class GameManager {
   }
 
   private resolveNight() {
-    if (this.resolving) return
+    if (this.resolving) {
+      this.log('night', `[RESOLVE] resolveNight() called but already resolving — skipping`)
+      return
+    }
     this.resolving = true
     if (this.nightTimeout) { clearTimeout(this.nightTimeout); this.nightTimeout = null }
     if (this.mafiaGraceTimer) { clearTimeout(this.mafiaGraceTimer); this.mafiaGraceTimer = null }
+
+    // Log full night action summary
+    const mafiaPlayers = this.state.players.filter((p) => p.role === 'mafia' && p.status === 'alive')
+    const detectivePlayer = this.state.players.find((p) => p.role === 'detective' && p.status === 'alive')
+    const doctorPlayer = this.state.players.find((p) => p.role === 'doctor' && p.status === 'alive')
+    this.log('night', `[RESOLVE] ========== NIGHT ${this.state.day} RESOLUTION ==========`)
+    this.log('night', `[RESOLVE] Mafia votes (${this.mafiaVotes.size}): ${[...this.mafiaVotes.entries()].map(([k, v]) => `${this.state.players.find(p => p.id === k)?.name}→${this.state.players.find(p => p.id === v)?.name}`).join(', ') || 'NONE'}`)
+    this.log('night', `[RESOLVE] Detective target: ${this.detectiveTarget ? this.state.players.find(p => p.id === this.detectiveTarget)?.name : 'NONE'} (detective: ${detectivePlayer?.name ?? 'dead'})`)
+    this.log('night', `[RESOLVE] Doctor target: ${this.doctorTarget ? this.state.players.find(p => p.id === this.doctorTarget)?.name : 'NONE'} (doctor: ${doctorPlayer?.name ?? 'dead'})`)
+    this.log('night', `[RESOLVE] Alive mafia: ${mafiaPlayers.map(p => `${p.name}(${this.isBot(p.name) ? 'bot' : 'human'})`).join(', ')}`)
 
     // 1. Determine mafia kill target (majority vote, random on tie)
     const voteCounts = new Map<string, number>()
@@ -909,12 +987,26 @@ export class GameManager {
       const target = this.state.players.find((p) => p.id === this.detectiveTarget)
       const detective = this.state.players.find((p) => p.role === 'detective' && p.status === 'alive')
       if (target && detective) {
+        this.log('night', `[DETECTIVE-RESULT] ${detective.name} investigated ${target.name} → role: ${target.role}`)
+        // Send via WebSocket for human detectives
         this.sendToPlayer(detective.id, {
           type: 'investigation_result',
           targetName: target.name,
           targetRole: target.role,
         })
-        this.log('night', `Detective result: ${target.name} is ${target.role}`)
+        // Also send via voice agent context for bot detectives
+        const detectiveAgent = this.voiceAgents.get(detective.name)
+        if (detectiveAgent) {
+          this.log('night', `[DETECTIVE-RESULT] Sending result to bot detective ${detective.name} via sendContext`)
+          detectiveAgent.sendSilentContext(
+            `[SYSTEM] Investigation result: ${target.name} is ${target.role === 'mafia' ? 'MAFIA' : 'NOT MAFIA (innocent)'}. Remember this — use it during the day discussion to guide the town.`
+          )
+        }
+      }
+    } else {
+      const detective = this.state.players.find((p) => p.role === 'detective' && p.status === 'alive')
+      if (detective) {
+        this.log('night', `[DETECTIVE-RESULT] No investigation target was set for ${detective.name}`)
       }
     }
 
@@ -946,7 +1038,10 @@ export class GameManager {
   startDay(eliminatedId: string | null, doctorSaved: boolean = false) {
     this.resolving = false
     this.dayStartedAt = Date.now()
-    this.log('phase', `→ DAY ${this.state.day}`)
+    const killedName = eliminatedId ? this.state.players.find(p => p.id === eliminatedId)?.name : null
+    this.log('phase', `========== DAY ${this.state.day + 1} ==========`)
+    this.log('phase', `Night result: ${killedName ? `${killedName} killed` : doctorSaved ? 'Doctor saved the target!' : 'Nobody killed'}`)
+    this.log('phase', `Alive: ${this.state.players.filter(p => p.status === 'alive').map(p => `${p.name}(${p.role})`).join(', ')}`)
     const eliminatedName = eliminatedId
       ? this.state.players.find((p) => p.id === eliminatedId)?.name
       : null
@@ -980,38 +1075,114 @@ export class GameManager {
   startVoting() {
     if (this.dayTimeout) { clearTimeout(this.dayTimeout); this.dayTimeout = null }
     this.resolving = false
-    this.log('phase', `→ VOTING`)
     this.state.phase = 'voting'
     this.votes.clear()
 
-    const aliveList = this.state.players.filter((p) => p.status === 'alive').map((p) => p.name).join(', ')
+    const alivePlayers = this.state.players.filter((p) => p.status === 'alive')
+    const aliveList = alivePlayers.map((p) => p.name).join(', ')
+    const aliveBots = alivePlayers.filter((p) => this.isBot(p.name))
+    const aliveHumans = alivePlayers.filter((p) => !this.isBot(p.name))
+    this.log('phase', `========== VOTING ==========`)
+    this.log('phase', `Alive: ${alivePlayers.length} (${aliveHumans.length} humans, ${aliveBots.length} bots): ${aliveList}`)
+    this.log('phase', `Bridge alive: ${this.bridge?.isAlive() ?? false}, VoiceAgents active: ${this.voiceAgents.size}`)
     this.broadcastEvent({ type: 'phase_changed', phase: 'voting', state: this.getPublicState() })
 
+    // Narrator announces voting (2-3 sentences)
     this.bridge?.sendText(
       `[SYSTEM] Voting time! Alive: ${aliveList}. Announce voting starts (2-3 sentences). Call each player by name, ask who to eliminate, then call cast_vote for their answer.`
     )
 
-    // Send direct voting instructions to each VoiceAgent
-    this.voiceAgents.forEach((agent, agentName) => {
-      const player = this.state.players.find((p) => p.name === agentName && p.status === 'alive')
-      if (!player) return
-      const targets = this.state.players
-        .filter((p) => p.status === 'alive' && p.name !== agentName)
-        .map((p) => p.name).join(', ')
-      agent.sendContext(`[GAME] Voting phase: Call cast_vote now. Choose who to eliminate from: ${targets}.`)
-    })
+    // Defer bot instructions + voting timer until narrator finishes speaking
+    this.pendingPhaseTransition = () => {
+      this.log('timer', `Narrator done → starting voting phase timer + bot instructions`)
 
-    this.log('timer', `Voting timeout starts: ${GAME_CONSTANTS.VOTING_TIMEOUT / 1000}s`)
-    this.votingTimeout = setTimeout(() => {
-      this.log('timer', 'Voting timeout fired → resolveVotes()')
-      this.resolveVotes()
-    }, GAME_CONSTANTS.VOTING_TIMEOUT)
+      // Send direct voting instructions to each VoiceAgent
+      this.voiceAgents.forEach((agent, agentName) => {
+        const player = this.state.players.find((p) => p.name === agentName && p.status === 'alive')
+        if (!player) return
+        const targets = this.state.players
+          .filter((p) => p.status === 'alive' && p.name !== agentName)
+          .map((p) => p.name).join(', ')
+        this.log('voting', `[BOT-INSTRUCT] Sending vote instruction to ${agentName}. Targets: ${targets}`)
+        agent.sendContext(`[GAME] Voting phase: Call cast_vote now. Choose who to eliminate from: ${targets}.`)
+      })
+
+      // Bot voting retry at 10s — re-send instruction to bots that haven't voted
+      setTimeout(() => {
+        if (this.state.phase !== 'voting') return
+        this.voiceAgents.forEach((agent, agentName) => {
+          const player = this.state.players.find((p) => p.name === agentName && p.status === 'alive')
+          if (!player || this.votes.has(player.id)) return
+          const targets = this.state.players
+            .filter((p) => p.status === 'alive' && p.name !== agentName)
+            .map((p) => p.name).join(', ')
+          this.log('voting', `[BOT-RETRY] ${agentName} hasn't voted after 10s — resending instruction`)
+          agent.sendContext(`[GAME] URGENT: You MUST call cast_vote NOW. Pick one player to eliminate from: ${targets}. Do NOT speak, just call the function immediately.`)
+        })
+      }, 10_000)
+
+      // Bot voting fallback at 20s — auto-assign random vote for bots that still haven't voted
+      setTimeout(() => {
+        if (this.state.phase !== 'voting') return
+        let fallbackTriggered = false
+        this.voiceAgents.forEach((_agent, agentName) => {
+          const player = this.state.players.find((p) => p.name === agentName && p.status === 'alive')
+          if (!player || this.votes.has(player.id)) return
+          const validTargets = this.state.players.filter(
+            (p) => p.status === 'alive' && p.id !== player.id
+          )
+          const randomTarget = validTargets[Math.floor(Math.random() * validTargets.length)]
+          if (randomTarget) {
+            this.log('voting', `[BOT-FALLBACK] ${agentName} didn't vote in 20s — auto-voting: ${randomTarget.name}`)
+            this.votes.set(player.id, randomTarget.id)
+            this.broadcastEvent({ type: 'vote_cast', fromId: player.id, targetId: randomTarget.id })
+            fallbackTriggered = true
+          }
+        })
+        if (fallbackTriggered) {
+          const eligibleVoters = this.state.players.filter((p) => p.status === 'alive' && (p.isConnected || this.isBot(p.name)))
+          this.log('voting', `[BOT-FALLBACK] After fallbacks: ${this.votes.size}/${eligibleVoters.length} votes`)
+          if (this.votes.size >= eligibleVoters.length) {
+            this.resolveVotes()
+          }
+        }
+      }, 20_000)
+
+      this.log('timer', `Voting timeout starts: ${GAME_CONSTANTS.VOTING_TIMEOUT / 1000}s`)
+      this.votingTimeout = setTimeout(() => {
+        this.log('timer', 'Voting timeout fired → resolveVotes()')
+        this.resolveVotes()
+      }, GAME_CONSTANTS.VOTING_TIMEOUT)
+    }
+
+    // Safety fallback: if turnComplete never fires within 30s, start voting anyway
+    setTimeout(() => {
+      if (this.pendingPhaseTransition && this.state.phase === 'voting') {
+        this.log('timer', 'Voting safety fallback: starting timer without turnComplete (30s)')
+        const fn = this.pendingPhaseTransition
+        this.pendingPhaseTransition = null
+        fn()
+      }
+    }, 30_000)
   }
 
   private resolveVotes() {
-    if (this.resolving) return
+    if (this.resolving) {
+      this.log('voting', `[RESOLVE] resolveVotes() called but already resolving — skipping`)
+      return
+    }
     this.resolving = true
     if (this.votingTimeout) { clearTimeout(this.votingTimeout); this.votingTimeout = null }
+    this.log('voting', `[RESOLVE] ========== VOTING RESOLUTION ==========`)
+    this.log('voting', `[RESOLVE] Total votes: ${this.votes.size}`)
+    const alivePlayers = this.state.players.filter((p) => p.status === 'alive')
+    const botsAlive = alivePlayers.filter((p) => this.isBot(p.name))
+    const humansAlive = alivePlayers.filter((p) => !this.isBot(p.name))
+    this.log('voting', `[RESOLVE] Alive: ${alivePlayers.length} (${humansAlive.length} humans, ${botsAlive.length} bots)`)
+    const botVotes = [...this.votes.entries()].filter(([id]) => this.state.players.find(p => p.id === id && this.isBot(p.name)))
+    const humanVotes = [...this.votes.entries()].filter(([id]) => this.state.players.find(p => p.id === id && !this.isBot(p.name)))
+    this.log('voting', `[RESOLVE] Bot votes: ${botVotes.map(([f, t]) => `${this.state.players.find(p => p.id === f)?.name}→${this.state.players.find(p => p.id === t)?.name}`).join(', ') || 'NONE'}`)
+    this.log('voting', `[RESOLVE] Human votes: ${humanVotes.map(([f, t]) => `${this.state.players.find(p => p.id === f)?.name}→${this.state.players.find(p => p.id === t)?.name}`).join(', ') || 'NONE'}`)
 
     const voteCounts = new Map<string, number>()
     this.votes.forEach((targetId) => {
@@ -1143,7 +1314,9 @@ export class GameManager {
   private endGame(winner: 'mafia' | 'civilians') {
     this.state.winner = winner
     this.state.phase = 'game_over'
-    this.log('phase', `→ GAME OVER! Winner: ${winner}`)
+    this.log('phase', `========== GAME OVER ==========`)
+    this.log('phase', `Winner: ${winner}`)
+    this.log('phase', `Final roles: ${this.state.players.map(p => `${p.name}(${p.role},${p.status})`).join(', ')}`)
     this.broadcastEvent({ type: 'game_over', winner, state: this.state })
     this.bridge?.sendText(
       `[SYSTEM] Game over! ${winner} won! Roles: ${this.state.players.map((p) => `${p.name}=${p.role}`).join(', ')}. Announce dramatically.`

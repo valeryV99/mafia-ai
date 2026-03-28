@@ -21,7 +21,7 @@ _Based on CONVENTIONS.md._
 - [x] Each player receives their role privately
 - [x] Mic auto-muted on entry, auto-unmuted on exit
 - [x] Delay ~3s (dev) / ~5s (prod) before narrator begins
-- [ ] Timer: not shown
+- [x] Timer: not shown
 - [x] Narrator: silent
 
 ---
@@ -43,21 +43,21 @@ _Based on CONVENTIONS.md._
 - [x] NightPanel shows correct action per role (mafia: kill, detective: investigate, doctor: save, civilian: wait)
 - [x] No player can target themselves
 - [x] After selecting target: confirmation shown
-- [ ] `checkAllNightActionsComplete()` resolves night early if all special roles acted
-- [ ] Timer fallback: `resolveNight()` after 45s/90s if not all acted
+- [x] `checkAllNightActionsComplete()` resolves night early if all special roles acted
+- [x] Timer fallback: `resolveNight()` after 45s/90s if not all acted
 
 ---
 
 ## Step 5 — Night resolution + Narrator speaks (→ Day or Game Over)
 
-- [ ] `resolveNight()` applies mafia kill (majority vote, random on tie)
-- [ ] Doctor blocks kill if same target chosen
-- [ ] Detective gets investigation result (even if target killed same turn)
+- [x] `resolveNight()` applies mafia kill (majority vote, random on tie)
+- [x] Doctor blocks kill if same target chosen
+- [x] Detective gets investigation result (even if target killed same turn)
 - [x] Win condition checked: mafia ≥ civilians → Game Over
-- [ ] Narrator speaks AFTER resolution (knows the result)
-- [ ] Timer FROZEN while narrator speaks
-- [ ] If game continues: narrator announces kill or save (2–3 sentences) → Day
-- [ ] If mafia wins: narrator announces → Game Over
+- [x] Narrator speaks AFTER resolution (knows the result)
+- [x] Timer FROZEN while narrator speaks
+- [x] If game continues: narrator announces kill or save (2–3 sentences) → Day
+- [x] If mafia wins: narrator announces → Game Over
 
 ---
 
@@ -74,8 +74,8 @@ _Based on CONVENTIONS.md._
 
 ## Step 7 — Narrator speaks (transition → Voting)
 
-- [ ] Timer FROZEN while narrator speaks
-- [ ] Narrator announces voting, calls each player by name
+- [x] Timer FROZEN while narrator speaks (voting timer deferred via pendingPhaseTransition)
+- [x] Narrator announces voting, calls each player by name
 - [ ] Players cannot talk (mic muted or blocked)
 - [x] `turnComplete` → timer starts
 
@@ -83,12 +83,12 @@ _Based on CONVENTIONS.md._
 
 ## Step 8 — Voting (`voting`)
 
-- [ ] Timer starts ONLY after narrator finishes
+- [x] Timer starts ONLY after narrator finishes (deferred via pendingPhaseTransition + 30s safety fallback)
 - [x] Timer duration: 40s dev / 60s prod
 - [x] Players vote by clicking a player tile
 - [ ] Players can talk during voting
-- [ ] All votes cast → `resolveVotes()` immediately
-- [ ] Timer expires → `resolveVotes()` automatically
+- [x] All votes cast → `resolveVotes()` immediately
+- [x] Timer expires → `resolveVotes()` automatically
 - [x] Tie → random among tied players
 
 ---
@@ -99,25 +99,25 @@ _Based on CONVENTIONS.md._
 - [x] Win condition checked: mafia ≥ civilians OR all mafia dead
 - [x] Narrator speaks AFTER resolution
 - [x] Timer FROZEN while narrator speaks
-- [ ] If game continues: narrator announces elimination + night intro → Night
-- [ ] If game over: narrator announces → Game Over
+- [x] If game continues: narrator announces elimination + night intro → Night
+- [x] If game over: narrator announces → Game Over
 - [x] Eliminated player shown with gray tile in VideoGrid
 
 ---
 
 ## Step 10 — Game Over (`game_over`)
 
-- [ ] Narrator announces winner dramatically
-- [ ] Timer: not shown
+- [x] Narrator announces winner dramatically
+- [x] Timer: not shown
 - [ ] Narrator responds if players speak to them
 
 ---
 
 ## Night Rules
 
-- [ ] Doctor + Mafia target same person → Doctor blocks the kill
-- [ ] Detective investigates someone killed same turn → result still delivered
-- [ ] Multiple mafia members: majority vote wins, random on tie
+- [x] Doctor + Mafia target same person → Doctor blocks the kill
+- [x] Detective investigates someone killed same turn → result still delivered
+- [x] Multiple mafia members: majority vote wins, random on tie
 - [x] No player may target themselves during Night or Voting
 
 ---
@@ -142,11 +142,13 @@ _Based on CONVENTIONS.md._
 
 ## Known Bugs
 
-- [ ] **Bots do not always vote** — agents often fail to cast a vote during Voting even when prompted (often problems with agent Rex)
+- [x] **Bots do not always vote** — FIXED: added retry at 10s + auto-fallback vote at 20s for bots that don't respond
 - **Game Master issues**:
-  - [ ] sometimes can stop answering or the audio cuts off at the end
-  - [ ] sometimes dont fire turnComplete, so the safety fallback triggered
-- **Special roles is not working**:
-  - [ ] Mafia cannot kill
-  - [ ] Detective receives no information about person he/she investigates
-  - [ ] Doctor probably cannot heal (not tested)
+  - [ ] sometimes can stop answering or the audio cuts off at the end (added logging to diagnose)
+  - [ ] sometimes dont fire turnComplete, so the safety fallback triggered (added logging to diagnose)
+- **Special roles — FIXED**:
+  - [x] Mafia cannot kill — FIXED: added bot mafia 15s fallback (was missing, only detective/doctor had fallback) + retry at 8s
+  - [x] Detective receives no information — FIXED: bot detectives now receive investigation result via sendSilentContext (was only WebSocket which bots don't have)
+  - [x] Doctor probably cannot heal — FIXED: resolveNight() doctor save logic verified working + added bot doctor 15s fallback
+- **Diagnostics added**:
+  - [x] Comprehensive logging: phase transitions, bot instructions, tool calls, vote tallies, night resolution, Gemini session health, turnComplete tracking
