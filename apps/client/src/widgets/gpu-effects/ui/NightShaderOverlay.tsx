@@ -1,3 +1,4 @@
+// @ts-nocheck — GPU shader functions use TypeGPU's 'use gpu' directive, type-checked by unplugin-typegpu, not tsc
 import { Suspense, useMemo } from 'react'
 import { useRoot, useConfigureContext, useFrame, useUniformValue } from '@typegpu/react'
 import tgpu, { d, std } from 'typegpu'
