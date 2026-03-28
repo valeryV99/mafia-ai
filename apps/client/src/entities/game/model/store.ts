@@ -17,6 +17,7 @@ interface GameStore {
   currentSpeakerId: string | null
   isNarratorSpeaking: boolean
   investigationResult: { targetName: string; targetRole: Role } | null
+  activeVoiceAgentId: string | null
 
   setRoomId: (id: string) => void
   setPlayerId: (id: string) => void
@@ -37,6 +38,7 @@ interface GameStore {
   setCurrentSpeaker: (id: string | null) => void
   setNarratorSpeaking: (val: boolean) => void
   setInvestigationResult: (r: { targetName: string; targetRole: Role } | null) => void
+  setActiveVoiceAgent: (id: string | null) => void
   reset: () => void
 }
 
@@ -56,6 +58,7 @@ export const useGameStore = create<GameStore>((set) => ({
   currentSpeakerId: null,
   isNarratorSpeaking: false,
   investigationResult: null,
+  activeVoiceAgentId: null,
 
   setRoomId: (roomId) => set({ roomId }),
   setPlayerId: (playerId) => set({ playerId }),
@@ -90,5 +93,6 @@ export const useGameStore = create<GameStore>((set) => ({
   setCurrentSpeaker: (currentSpeakerId) => set({ currentSpeakerId }),
   setNarratorSpeaking: (isNarratorSpeaking) => set({ isNarratorSpeaking }),
   setInvestigationResult: (investigationResult) => set({ investigationResult }),
-  reset: () => set({ roomId: null, playerId: null, playerName: null, myRole: null, gameState: null, fishjamToken: null, lastTranscript: null, playerTranscripts: {}, votes: {}, suspicions: {}, behavioralNotes: [], faceMetrics: null, currentSpeakerId: null, isNarratorSpeaking: false, investigationResult: null }),
+  setActiveVoiceAgent: (activeVoiceAgentId) => set({ activeVoiceAgentId }),
+  reset: () => set({ roomId: null, playerId: null, playerName: null, myRole: null, gameState: null, fishjamToken: null, lastTranscript: null, playerTranscripts: {}, votes: {}, suspicions: {}, behavioralNotes: [], faceMetrics: null, currentSpeakerId: null, isNarratorSpeaking: false, investigationResult: null, activeVoiceAgentId: null }),
 }))
