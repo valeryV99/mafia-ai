@@ -24,6 +24,7 @@ export class GameManager {
   // fallback safety net in startNight / resolveVotes (see usage below)
   private pendingPhaseTransition: (() => void) | null = null
   private fishjamPeerNames: Map<string, string> = new Map()
+  private faceMetricsCooldowns: Map<string, number> = new Map()
 
   // Voice agent state (from main)
   private voiceAgents: Map<string, VoiceAgent> = new Map()
@@ -102,6 +103,8 @@ export class GameManager {
       currentSpeakerId: null,
       voiceAgentIds: [],
       activeVoiceAgentId: null,
+      agentsMuted: false,
+      selectedAgentIds: [],
     }
     this.clients = new Map()
     log(roomId, 'init', 'Game created')
@@ -1512,6 +1515,12 @@ export class GameManager {
     const isNoteworthy = metrics.stress > 0.2 || metrics.surprise > 0.3 || metrics.lookingAway || metrics.happiness > 0.4
     if (!isNoteworthy) return
 
+    // Throttle: max once per 20s per player to avoid spamming narrator
+    const now = Date.now()
+    const lastSent = this.faceMetricsCooldowns.get(playerId) ?? 0
+    if (now - lastSent < 20_000) return
+    this.faceMetricsCooldowns.set(playerId, now)
+
     const observations: string[] = []
     if (metrics.stress > 0.2) observations.push(`stress level ${(metrics.stress * 100).toFixed(0)}%`)
     if (metrics.surprise > 0.6) observations.push(`surprised expression ${(metrics.surprise * 100).toFixed(0)}%`)
@@ -1519,7 +1528,23 @@ export class GameManager {
     if (metrics.happiness > 0.4) observations.push(`smiling ${(metrics.happiness * 100).toFixed(0)}%`)
     if (metrics.happiness > 0.4 && metrics.stress > 0.2) observations.push('possible nervous smile')
 
-    if (observations.length > 0) this.log('face', `${player.name}: ${observations.join(', ')}`)
+    if (observations.length === 0) return
+
+    const note = `${player.name}: ${observations.join(', ')}`
+    this.log('face', note)
+
+    // Send to narrator so it can comment on player emotions
+    this.bridge?.sendText(
+      `[FACE_ANALYSIS] ${player.name} shows: ${observations.join(', ')}. You may briefly comment on this if relevant to the discussion — e.g. "I notice some nervousness..." — but don't overdo it.`
+    )
+
+    // Broadcast behavioral note to all clients for the AI Analysis panel
+    this.broadcastEvent({ type: 'behavioral_note', playerName: player.name, note: observations.join(', ') })
+
+    // Broadcast structured stress alert for VideoTile indicators
+    if (metrics.stress > 0.2) {
+      this.broadcastEvent({ type: 'stress_alert', playerId, playerName: player.name, level: metrics.stress })
+    }
   }
 
   sendPlayerAudio(_chunk: Buffer) {

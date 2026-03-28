@@ -219,6 +219,10 @@ export function useGameSocket() {
             console.log(`%c[Behavior] ${msg.playerName}: ${msg.note}`, 'color: #ec4899')
             break
           }
+          case 'stress_alert': {
+            useGameStore.getState().setPlayerStress(msg.playerId, msg.level)
+            break
+          }
           case 'agent_mute_changed': {
             useGameStore.getState().setActiveVoiceAgent(msg.activeAgentId)
             console.log(`%c[Agent] Active voice agent: ${msg.activeAgentId ?? 'none'}`, 'color: #a78bfa; font-weight: bold')

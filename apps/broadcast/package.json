@@ -1,0 +1,20 @@
+{
+  "name": "broadcast",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/index.tsx",
+    "start": "tsx src/index.tsx"
+  },
+  "dependencies": {
+    "@swmansion/smelter-node": "0.3.2",
+    "@swmansion/smelter": "0.3.0",
+    "@mafia-ai/types": "workspace:*",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "@types/react": "^18.3.0",
+    "typescript": "~5.9.3"
+  }
+}

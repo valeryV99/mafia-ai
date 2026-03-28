@@ -14,6 +14,7 @@ interface GameStore {
   suspicions: Record<string, { score: number; reason: string }>
   behavioralNotes: Array<{ playerName: string; note: string; timestamp: number }>
   faceMetrics: { stress: number; surprise: number; happiness: number; lookingAway: boolean } | null
+  playerStress: Record<string, number>
   currentSpeakerId: string | null
   isNarratorSpeaking: boolean
   investigationResult: { targetName: string; targetRole: Role } | null
@@ -39,6 +40,7 @@ interface GameStore {
   updateSuspicion: (playerId: string, score: number, reason: string) => void
   addBehavioralNote: (playerName: string, note: string) => void
   setFaceMetrics: (m: { stress: number; surprise: number; happiness: number; lookingAway: boolean }) => void
+  setPlayerStress: (playerId: string, stress: number) => void
   setCurrentSpeaker: (id: string | null) => void
   setNarratorSpeaking: (val: boolean) => void
   setInvestigationResult: (r: { targetName: string; targetRole: Role } | null) => void
@@ -63,6 +65,7 @@ export const useGameStore = create<GameStore>((set) => ({
   suspicions: {},
   behavioralNotes: [],
   faceMetrics: null,
+  playerStress: {},
   currentSpeakerId: null,
   isNarratorSpeaking: false,
   investigationResult: null,
@@ -102,6 +105,9 @@ export const useGameStore = create<GameStore>((set) => ({
     behavioralNotes: [...state.behavioralNotes.slice(-20), { playerName, note, timestamp: Date.now() }]
   })),
   setFaceMetrics: (faceMetrics) => set({ faceMetrics }),
+  setPlayerStress: (playerId, stress) => set((state) => ({
+    playerStress: { ...state.playerStress, [playerId]: stress }
+  })),
   setCurrentSpeaker: (currentSpeakerId) => set({ currentSpeakerId }),
   setNarratorSpeaking: (isNarratorSpeaking) => set({ isNarratorSpeaking }),
   setInvestigationResult: (investigationResult) => set({ investigationResult }),
@@ -110,5 +116,5 @@ export const useGameStore = create<GameStore>((set) => ({
   setSelectedAgentIds: (selectedAgentIds) => set({ selectedAgentIds }),
   setNightActionWindowOpen: (nightActionWindowOpen) => set({ nightActionWindowOpen }),
   setNightActionSubmitted: (nightActionSubmitted) => set({ nightActionSubmitted }),
-  reset: () => set({ roomId: null, playerId: null, playerName: null, myRole: null, gameState: null, fishjamToken: null, lastTranscript: null, playerTranscripts: {}, votes: {}, suspicions: {}, behavioralNotes: [], faceMetrics: null, currentSpeakerId: null, isNarratorSpeaking: false, investigationResult: null, activeVoiceAgentId: null, agentsMuted: false, selectedAgentIds: [], nightActionWindowOpen: false, nightActionSubmitted: false }),
+  reset: () => set({ roomId: null, playerId: null, playerName: null, myRole: null, gameState: null, fishjamToken: null, lastTranscript: null, playerTranscripts: {}, votes: {}, suspicions: {}, behavioralNotes: [], faceMetrics: null, playerStress: {}, currentSpeakerId: null, isNarratorSpeaking: false, investigationResult: null, activeVoiceAgentId: null, agentsMuted: false, selectedAgentIds: [], nightActionWindowOpen: false, nightActionSubmitted: false }),
 }))

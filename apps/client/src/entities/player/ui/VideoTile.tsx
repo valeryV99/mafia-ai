@@ -9,9 +9,10 @@ interface VideoTileProps {
   suspicion?: { score: number; reason: string }
   isSpeaking?: boolean
   transcript?: string
+  stressLevel?: number
 }
 
-export function VideoTile({ stream, name, isDead, isYou, isMuted, suspicion, isSpeaking, transcript }: VideoTileProps) {
+export function VideoTile({ stream, name, isDead, isYou, isMuted, suspicion, isSpeaking, transcript, stressLevel = 0 }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
 
   useEffect(() => {
@@ -25,13 +26,16 @@ export function VideoTile({ stream, name, isDead, isYou, isMuted, suspicion, isS
     }
   }, [stream])
 
-  const borderColor = isDead
-    ? 'border-[#444]'
-    : isSpeaking
-      ? 'border-green-400 shadow-[0_0_15px_rgba(74,222,128,0.4)]'
-      : isYou
-        ? 'border-[#6366f1]'
-        : 'border-[#333]'
+  function getBorderStyle() {
+    if (isDead) return 'border-[#444]'
+    if (isSpeaking) return 'border-green-400 shadow-[0_0_15px_rgba(74,222,128,0.4)]'
+    if (stressLevel > 0.6) return 'border-red-500/70 shadow-[0_0_12px_rgba(239,68,68,0.4)]'
+    if (stressLevel > 0.3) return 'border-orange-400/50 shadow-[0_0_8px_rgba(251,146,60,0.3)]'
+    if (isYou) return 'border-[#6366f1]'
+    return 'border-[#333]'
+  }
+
+  const borderColor = getBorderStyle()
 
   return (
     <div className={`relative rounded-xl overflow-hidden bg-[#1a1a2e] aspect-[4/3] border-2 transition-all duration-300 ${borderColor} ${isDead ? 'opacity-50' : ''}`}>
@@ -61,6 +65,13 @@ export function VideoTile({ stream, name, isDead, isYou, isMuted, suspicion, isS
       {suspicion && suspicion.score >= 7 && !isDead && (
         <div className="absolute top-1 right-1 bg-red-600/90 text-white text-[9px] px-1.5 py-0.5 rounded font-bold">
           SUS
+        </div>
+      )}
+
+      {/* Stress panic indicator */}
+      {stressLevel > 0.3 && !isDead && (
+        <div className={`absolute top-1 ${suspicion && suspicion.score >= 7 ? 'right-10' : 'right-1'} text-lg animate-bounce drop-shadow-[0_0_6px_rgba(239,68,68,0.8)]`}>
+          {stressLevel > 0.6 ? '😱' : '😰'}
         </div>
       )}
 
