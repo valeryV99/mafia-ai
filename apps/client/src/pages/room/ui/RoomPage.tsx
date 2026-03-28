@@ -263,7 +263,7 @@ export function RoomPage() {
 
         {/* Night panel — shown only after narrator finishes speaking */}
         {isNight && isAlive && !isNarratorSpeaking && (
-          <NightPanel />
+          <NightPanel onAction={(targetId) => send({ type: 'night_action', targetId })} />
         )}
 
         {/* Detective investigation result */}

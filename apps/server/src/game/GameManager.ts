@@ -403,6 +403,11 @@ export class GameManager {
         }
       },
 
+      onSessionClose: () => {
+        this.log('phase', 'GameMaster session closed — sending transcript_clear to unblock clients')
+        this.broadcastEvent({ type: 'transcript_clear' })
+      },
+
       onToolCall: (name, args) => {
         this.handleGeminiCommand({ action: name, ...args } as any)
       },
@@ -456,21 +461,25 @@ export class GameManager {
     this.checkAllNightActionsComplete()
   }
 
-  private checkAllNightActionsComplete() {
+  private isNightComplete(): boolean {
     const mafiaPlayers = this.state.players.filter((p) => p.role === 'mafia' && p.status === 'alive')
     const detectiveAlive = this.state.players.some((p) => p.role === 'detective' && p.status === 'alive')
     const doctorAlive = this.state.players.some((p) => p.role === 'doctor' && p.status === 'alive')
-
-    // Only require HUMAN mafia to have voted — bots vote as a bonus if they respond in time
     const humanMafia = mafiaPlayers.filter((p) => !this.isBot(p.name))
     const mafiaActed = mafiaPlayers.length === 0
       || (humanMafia.length === 0 ? this.mafiaVotes.size > 0 : humanMafia.every((p) => this.mafiaVotes.has(p.id)))
     const detectiveActed = this.detectiveTarget !== null || !detectiveAlive
     const doctorActed = this.doctorTarget !== null || !doctorAlive
+    return mafiaActed && detectiveActed && doctorActed
+  }
 
-    this.log('night', `checkAllNightActionsComplete: mafia=${mafiaActed}(${this.mafiaVotes.size}/${mafiaPlayers.length}) detective=${detectiveActed} doctor=${doctorActed}`)
+  private checkAllNightActionsComplete() {
+    const mafiaPlayers = this.state.players.filter((p) => p.role === 'mafia' && p.status === 'alive')
+    const complete = this.isNightComplete()
 
-    if (mafiaActed && detectiveActed && doctorActed) {
+    this.log('night', `checkAllNightActionsComplete: complete=${complete} mafia=${this.mafiaVotes.size}/${mafiaPlayers.length} detective=${this.detectiveTarget !== null} doctor=${this.doctorTarget !== null}`)
+
+    if (complete) {
       this.log('night', 'All roles acted → resolveNight()')
       if (this.nightTimeout) { clearTimeout(this.nightTimeout); this.nightTimeout = null }
       this.resolveNight()
@@ -522,7 +531,11 @@ export class GameManager {
             (p) => p.role === 'mafia' && p.status === 'alive' && !this.mafiaVotes.has(p.id)
           )
           if (remainingMafia.length === 0) {
-            this.bridge?.sendSilentContext(`[SYSTEM] All mafia bots have chosen their target. Say "The mafia has chosen." and move to Detective.`)
+            if (this.isNightComplete()) {
+              this.bridge?.sendSilentContext(`[SYSTEM] All roles have acted. Call resolve_night now.`)
+            } else {
+              this.bridge?.sendSilentContext(`[SYSTEM] All mafia bots have chosen their target. Say "The mafia has chosen." and wait for remaining roles.`)
+            }
           }
         }
         this.checkAllNightActionsComplete()
@@ -537,7 +550,11 @@ export class GameManager {
         this.detectiveTarget = target.id
         // Notify narrator when a bot detective acts
         if (this.isBot(cmd.voter || '')) {
-          this.bridge?.sendSilentContext(`[SYSTEM] Bot Detective has investigated. Say "The Detective has seen enough." and move to Doctor.`)
+          if (this.isNightComplete()) {
+            this.bridge?.sendSilentContext(`[SYSTEM] All roles have acted. Call resolve_night now.`)
+          } else {
+            this.bridge?.sendSilentContext(`[SYSTEM] Bot Detective has investigated. Say "The Detective has seen enough." and wait for remaining roles.`)
+          }
         }
         this.checkAllNightActionsComplete()
         break
@@ -551,7 +568,11 @@ export class GameManager {
         this.doctorTarget = target.id
         // Notify narrator when a bot doctor acts
         if (this.isBot(cmd.voter || '')) {
-          this.bridge?.sendSilentContext(`[SYSTEM] Bot Doctor has acted. All roles have had their turn — call resolve_night now.`)
+          if (this.isNightComplete()) {
+            this.bridge?.sendSilentContext(`[SYSTEM] All roles have acted. Call resolve_night now.`)
+          } else {
+            this.bridge?.sendSilentContext(`[SYSTEM] Bot Doctor has acted. Wait for remaining roles before calling resolve_night.`)
+          }
         }
         this.checkAllNightActionsComplete()
         break
@@ -559,6 +580,10 @@ export class GameManager {
 
       case 'resolve_night': {
         if (this.state.phase !== 'night') break
+        if (!this.isNightComplete()) {
+          this.log('night', 'resolve_night called by Gemini but not all human roles have acted — ignoring')
+          break
+        }
         this.log('night', 'resolve_night called by Gemini')
         if (this.nightTimeout) { clearTimeout(this.nightTimeout); this.nightTimeout = null }
         this.resolveNight()

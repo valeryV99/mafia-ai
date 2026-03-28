@@ -76,7 +76,7 @@ _Based on CONVENTIONS.md._
 
 - [x] Timer FROZEN while narrator speaks (voting timer deferred via pendingPhaseTransition)
 - [x] Narrator announces voting, calls each player by name
-- [ ] Players cannot talk (mic muted or blocked)
+- [x] Players cannot talk (mic muted or blocked)
 - [x] `turnComplete` → timer starts
 
 ---
@@ -86,7 +86,7 @@ _Based on CONVENTIONS.md._
 - [x] Timer starts ONLY after narrator finishes (deferred via pendingPhaseTransition + 30s safety fallback)
 - [x] Timer duration: 40s dev / 60s prod
 - [x] Players vote by clicking a player tile
-- [ ] Players can talk during voting
+- [x] Players can talk during voting
 - [x] All votes cast → `resolveVotes()` immediately
 - [x] Timer expires → `resolveVotes()` automatically
 - [x] Tie → random among tied players
@@ -107,9 +107,8 @@ _Based on CONVENTIONS.md._
 
 ## Step 10 — Game Over (`game_over`)
 
-- [x] Narrator announces winner dramatically
+- [ ] Narrator announces winner dramatically
 - [x] Timer: not shown
-- [ ] Narrator responds if players speak to them
 
 ---
 
@@ -142,13 +141,6 @@ _Based on CONVENTIONS.md._
 
 ## Known Bugs
 
-- [x] **Bots do not always vote** — FIXED: added retry at 10s + auto-fallback vote at 20s for bots that don't respond
 - **Game Master issues**:
   - [ ] sometimes can stop answering or the audio cuts off at the end (added logging to diagnose)
   - [ ] sometimes dont fire turnComplete, so the safety fallback triggered (added logging to diagnose)
-- **Special roles — FIXED**:
-  - [x] Mafia cannot kill — FIXED: added bot mafia 15s fallback (was missing, only detective/doctor had fallback) + retry at 8s
-  - [x] Detective receives no information — FIXED: bot detectives now receive investigation result via sendSilentContext (was only WebSocket which bots don't have)
-  - [x] Doctor probably cannot heal — FIXED: resolveNight() doctor save logic verified working + added bot doctor 15s fallback
-- **Diagnostics added**:
-  - [x] Comprehensive logging: phase transitions, bot instructions, tool calls, vote tallies, night resolution, Gemini session health, turnComplete tracking

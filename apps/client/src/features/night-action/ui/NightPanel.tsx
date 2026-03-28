@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useGameStore, useGameSocket } from '@/entities/game'
+import { useGameStore } from '@/entities/game'
 
 const ROLE_LABELS: Record<string, string> = {
   mafia: 'Choose who to eliminate',
@@ -7,9 +7,12 @@ const ROLE_LABELS: Record<string, string> = {
   doctor: 'Choose who to protect',
 }
 
-export function NightPanel() {
+interface NightPanelProps {
+  onAction: (targetId: string) => void
+}
+
+export function NightPanel({ onAction }: NightPanelProps) {
   const { gameState, playerId, myRole } = useGameStore()
-  const { send } = useGameSocket()
   const [submitted, setSubmitted] = useState(false)
 
   if (!gameState || !playerId || !myRole) return null
@@ -35,7 +38,7 @@ export function NightPanel() {
   )
 
   const handleSelect = (targetId: string) => {
-    send({ type: 'night_action', targetId })
+    onAction(targetId)
     setSubmitted(true)
   }
 
