@@ -1,6 +1,6 @@
 import type { Phase, Player, Role } from '@mafia-ai/types'
 import type { FaceMetrics } from '@/entities/game'
-import { AgentVoiceControls } from '@/widgets/agent-voice-controls'
+// import { AgentVoiceControls } from '@/widgets/agent-voice-controls'
 
 function phaseHint(phase: Phase, myRole: Role | null): string {
   if (phase === 'night') {
@@ -53,14 +53,14 @@ export function RoomInGameStatusBar({
   lastTranscript,
   isNarratorSpeaking,
   faceMetrics,
-  voiceAgentIds,
-  players,
-  agentsMuted,
-  selectedAgentIds,
-  phaseLocked,
+  // voiceAgentIds,
+  // players,
+  // agentsMuted,
+  // selectedAgentIds,
+  // phaseLocked,
   isMicrophoneMuted,
-  onToggleAgentsMuted,
-  onToggleAgentSelected,
+  // onToggleAgentsMuted,
+  // onToggleAgentSelected,
   onToggleMicrophoneMute,
 }: RoomInGameStatusBarProps) {
   const hint = phaseHint(phase, myRole)
@@ -88,16 +88,7 @@ export function RoomInGameStatusBar({
           {faceMetrics && <FaceMetricsStrip faceMetrics={faceMetrics} />}
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
-          <AgentVoiceControls
-            voiceAgentIds={voiceAgentIds}
-            players={players}
-            agentsMuted={agentsMuted}
-            selectedAgentIds={selectedAgentIds}
-            phaseLocked={phaseLocked}
-            size="compact"
-            onToggleAgentsMuted={onToggleAgentsMuted}
-            onToggleAgentSelected={onToggleAgentSelected}
-          />
+          {/* AgentVoiceControls hidden for hackathon demo — humans-only mode */}
           <button
             type="button"
             onClick={() => !isNarratorSpeaking && onToggleMicrophoneMute()}

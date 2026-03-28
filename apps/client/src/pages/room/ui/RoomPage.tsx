@@ -15,7 +15,7 @@ import { VictoryConfetti, NightShaderOverlay, GpuErrorBoundary } from '@/widgets
 import { RoomHeader } from '@/widgets/room-header'
 import { RoomInGameStatusBar } from '@/widgets/room-status-bar'
 import { InvestigationResultCard } from '@/widgets/investigation-result'
-import { LobbyVoiceSetup } from '@/widgets/lobby-voice-setup'
+// import { LobbyVoiceSetup } from '@/widgets/lobby-voice-setup'
 import { RoomShell, RoomContent } from '@/widgets/room-shell'
 import { useGameMasterAudioBinary } from '../model/useGameMasterAudioBinary'
 import { useRedirectIfNoPlayerName } from '../model/useRedirectIfNoPlayerName'
@@ -137,14 +137,7 @@ export function RoomPage() {
 
         {isLobby && (
           <div className="flex flex-col items-center gap-3 mt-5">
-            <LobbyVoiceSetup
-              gameState={gameState}
-              agentsMuted={agentsMuted}
-              selectedAgentIds={selectedAgentIds}
-              onAddVoiceAgent={() => send({ type: 'add_voice_agent' })}
-              onToggleAgentsMuted={toggleAgentsMuted}
-              onToggleAgentSelected={toggleAgentSelected}
-            />
+            {/* AI voice agents deactivated for hackathon demo — humans-only mode */}
             <StartButton
               playerCount={gameState.players.length}
               minPlayers={4}
