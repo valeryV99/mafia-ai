@@ -32,9 +32,10 @@ interface VideoGridProps {
   playerName: string | null
   localPeer: Peer | null
   remotePeers: Peer[]
+  localCameraStream?: MediaStream | null
 }
 
-export function VideoGrid({ players, playerId, playerName, localPeer, remotePeers }: VideoGridProps) {
+export function VideoGrid({ players, playerId, playerName, localPeer, remotePeers, localCameraStream }: VideoGridProps) {
   const suspicions = useGameStore((s) => s.suspicions)
   const currentSpeakerId = useGameStore((s) => s.currentSpeakerId)
   const playerTranscripts = useGameStore((s) => s.playerTranscripts)
@@ -51,8 +52,8 @@ export function VideoGrid({ players, playerId, playerName, localPeer, remotePeer
   // Build a map: playerName → stream
   const streamByName = new Map<string, MediaStream | null>()
 
-  if (localPeer && playerName) {
-    streamByName.set(playerName, localPeer.cameraTrack?.stream ?? null)
+  if (playerName) {
+    streamByName.set(playerName, localPeer?.cameraTrack?.stream ?? localCameraStream ?? null)
   }
   for (const peer of remotePeers) {
     const name = getPeerName(peer)

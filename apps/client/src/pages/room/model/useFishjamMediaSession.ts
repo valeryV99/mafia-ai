@@ -4,7 +4,7 @@ import { useConnection, usePeers, useCamera, useMicrophone, useInitializeDevices
 export function useFishjamMediaSession(fishjamToken: string | null, playerName: string | null) {
   const { joinRoom, peerStatus } = useConnection()
   const { localPeer, remotePeers } = usePeers()
-  const { startCamera } = useCamera()
+  const { startCamera, cameraStream } = useCamera()
   const { startMicrophone, toggleMicrophoneMute, isMicrophoneMuted } = useMicrophone()
   const { initializeDevices } = useInitializeDevices()
   const fishjamJoinInitiated = useRef(false)
@@ -20,11 +20,12 @@ export function useFishjamMediaSession(fishjamToken: string | null, playerName: 
           peerMetadata: { name: playerName ?? '' },
         })
       )
-      .then(() => {
+      .then(async () => {
         console.log('[FISHJAM] Joined room, starting camera + microphone...')
-        startCamera()
+        const [, camErr] = await startCamera()
+        if (camErr) console.error('[FISHJAM] Camera start failed:', camErr)
+        else console.log('[FISHJAM] Camera started')
         startMicrophone()
-        console.log('[FISHJAM] Camera + microphone started — audio should flow to GM via SFU')
       })
       .catch((err) => {
         console.error('[FISHJAM] Setup FAILED:', err)
@@ -39,5 +40,6 @@ export function useFishjamMediaSession(fishjamToken: string | null, playerName: 
     remotePeers,
     toggleMicrophoneMute,
     isMicrophoneMuted,
+    cameraStream,
   }
 }

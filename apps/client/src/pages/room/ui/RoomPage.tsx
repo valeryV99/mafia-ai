@@ -39,7 +39,7 @@ export function RoomPage() {
   const { playAudio, startMicCapture, isMuted: isWsMicMuted, toggleMute: toggleWsMicMute } = useAudioPipeline(wsRef)
   const { metrics: faceMetrics, setVideoElement, startAnalysis, stopAnalysis, onMetrics } = useFaceAnalysis()
 
-  const { peerStatus, localPeer, remotePeers, toggleMicrophoneMute, isMicrophoneMuted } =
+  const { peerStatus, localPeer, remotePeers, toggleMicrophoneMute, isMicrophoneMuted, cameraStream } =
     useFishjamMediaSession(fishjamToken, playerName)
 
   useGameMasterAudioBinary(setOnBinary, playAudio)
@@ -148,6 +148,7 @@ export function RoomPage() {
           playerName={playerName}
           localPeer={localPeer}
           remotePeers={remotePeers}
+          localCameraStream={cameraStream}
         />
 
         {(gameState.phase === 'day' || isVoting) && <AiAnalysis />}

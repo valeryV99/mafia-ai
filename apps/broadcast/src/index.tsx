@@ -1,7 +1,7 @@
 import Smelter from '@swmansion/smelter-node'
 import React from 'react'
 import { BroadcastScene, type BroadcastPlayer } from './scene'
-import { GRAYSCALE_SHADER, NIGHT_SHADER, STRESS_SHADER } from './shaders'
+import { GRAYSCALE_SHADER, NIGHT_SHADER, BLUR_SHADER, STRESS_SHADER } from './shaders'
 import type { Phase, GameState } from '@mafia-ai/types'
 
 const GAME_WS_URL = process.env.GAME_WS_URL || 'ws://localhost:3001/ws'
@@ -120,6 +120,7 @@ async function main() {
 
     await smelterInstance.registerShader('grayscale', { source: GRAYSCALE_SHADER })
     await smelterInstance.registerShader('night_darken', { source: NIGHT_SHADER })
+    await smelterInstance.registerShader('blur_only', { source: BLUR_SHADER })
     await smelterInstance.registerShader('stress_pulse', { source: STRESS_SHADER })
     console.log('[Broadcast] Shaders registered')
 

@@ -17,6 +17,7 @@ interface PlayerTileProps {
 
 function PlayerTile({ player, phase }: PlayerTileProps) {
   const isNight = phase === 'night'
+  const isRoleAssignment = phase === 'role_assignment'
   const isDead = player.status === 'dead'
 
   const shaderId = isDead
@@ -25,7 +26,9 @@ function PlayerTile({ player, phase }: PlayerTileProps) {
       ? 'stress_pulse'
       : isNight
         ? 'night_darken'
-        : undefined
+        : isRoleAssignment
+          ? 'blur_only'
+          : undefined
 
   const videoContent = (
     <Rescaler style={{ rescaleMode: 'fill' }}>
