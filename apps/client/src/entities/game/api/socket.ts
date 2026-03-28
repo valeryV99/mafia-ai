@@ -6,6 +6,8 @@ const WS_URL = import.meta.env.VITE_SERVER_WS_URL || 'ws://localhost:3001/ws'
 const MAX_RECONNECT_RETRIES = 5
 const RECONNECT_DELAY_MS = 2000
 
+const PLAYER_TRANSCRIPT_CLEAR_DELAY = 4000
+
 export function useGameSocket() {
   const ws = useRef<WebSocket | null>(null)
   const isConnecting = useRef(false)
@@ -14,6 +16,7 @@ export function useGameSocket() {
   const intentionalClose = useRef(false)
   const pendingMessages = useRef<ClientEvent[]>([])
   const onBinaryRef = useRef<((data: ArrayBuffer) => void) | null>(null)
+  const playerClearTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
   useEffect(() => {
     intentionalClose.current = false
@@ -75,12 +78,25 @@ export function useGameSocket() {
           case 'role_assigned':
             setMyRole(msg.role)
             break
-          case 'phase_changed':
+          case 'phase_changed': {
             setGameState(msg.state)
             if (msg.phase === 'voting') {
               clearVotes()
             }
+            useGameStore.getState().setInvestigationResult(null)
+            // Proactively freeze countdown — narrator will announce the new phase
+            useGameStore.getState().setNarratorSpeaking(true)
+            console.log(`%c[Phase] → ${msg.phase} at ${Date.now()}`, 'color: #34d399; font-weight: bold')
+            console.log(`%c[Timer] FROZEN on phase_changed → ${msg.phase} at ${Date.now()}`, 'color: #818cf8; font-weight: bold')
+            // Safety: unfreeze if narrator never fires turnComplete within 20s
+            setTimeout(() => {
+              if (useGameStore.getState().isNarratorSpeaking) {
+                useGameStore.getState().setNarratorSpeaking(false)
+                console.log(`%c[Timer] Safety reset — narrator never fired turnComplete`, 'color: #ef4444; font-weight: bold')
+              }
+            }, 20_000)
             break
+          }
           case 'player_eliminated':
             break
           case 'vote_cast': {
@@ -104,17 +120,51 @@ export function useGameSocket() {
             }, 3000)
             break
           }
-          case 'investigation_result':
+          case 'investigation_result': {
+            const { setInvestigationResult } = useGameStore.getState()
+            setInvestigationResult({ targetName: msg.targetName, targetRole: msg.targetRole })
             console.log(`%c[Investigation] ${msg.targetName} is ${msg.targetRole}`, 'color: #a78bfa; font-weight: bold')
             break
+          }
           case 'transcript': {
-            const { setLastTranscript } = useGameStore.getState()
-            setLastTranscript({ speaker: msg.speaker, text: msg.text })
+            const { appendGeminiTranscript, appendPlayerTranscript, clearPlayerTranscript, setNarratorSpeaking } = useGameStore.getState()
             if (msg.speaker === 'gemini') {
-              console.log(`%c[Gemini] ${msg.text}`, 'color: #fbbf24; font-weight: bold; font-size: 14px')
+              // Strip function call syntax Gemini leaks into speech transcription
+              const clean = msg.text
+                .replace(/`\w+\([^`]*\)`/g, '')  // `func(args)` backtick format
+                .replace(/<ctrl\d+>/g, '')          // <ctrl46> control char markers
+                .trim()
+              const wasAlreadySpeaking = useGameStore.getState().isNarratorSpeaking
+              setNarratorSpeaking(true)
+              if (clean) {
+                appendGeminiTranscript(clean)
+              }
+              if (!wasAlreadySpeaking) {
+                console.log(`%c[Narrator] SPEAKING start at ${Date.now()}`, 'color: #fbbf24; font-weight: bold')
+              }
+              console.log(`%c[STT] Game Master: "${msg.text}"`, 'color: #fbbf24; font-weight: bold')
             } else {
-              console.log(`%c[Player] ${msg.text}`, 'color: #60a5fa')
+              const label = msg.playerName ?? 'Unknown'
+              appendPlayerTranscript(label, msg.text)
+              console.log(`%c[STT] ${label}: "${msg.text}"`, 'color: #60a5fa; font-weight: bold')
+
+              // Reset debounced clear timer for this player
+              const existing = playerClearTimers.current.get(label)
+              if (existing) clearTimeout(existing)
+              const timer = setTimeout(() => {
+                clearPlayerTranscript(label)
+                playerClearTimers.current.delete(label)
+              }, PLAYER_TRANSCRIPT_CLEAR_DELAY)
+              playerClearTimers.current.set(label, timer)
             }
+            break
+          }
+          case 'transcript_clear': {
+            const { clearTranscript, setNarratorSpeaking } = useGameStore.getState()
+            clearTranscript()
+            setNarratorSpeaking(false)
+            console.log(`%c[Narrator] DONE (turnComplete) at ${Date.now()}`, 'color: #f59e0b; font-weight: bold')
+            console.log(`%c[Timer] RESUMED after narrator at ${Date.now()}`, 'color: #34d399; font-weight: bold')
             break
           }
           case 'suspicion_update': {
@@ -166,6 +216,8 @@ export function useGameSocket() {
     return () => {
       intentionalClose.current = true
       pendingMessages.current = []
+      playerClearTimers.current.forEach((t) => clearTimeout(t))
+      playerClearTimers.current.clear()
       if (reconnectTimeout.current) {
         clearTimeout(reconnectTimeout.current)
         reconnectTimeout.current = null

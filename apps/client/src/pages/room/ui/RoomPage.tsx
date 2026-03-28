@@ -24,6 +24,7 @@ export function RoomPage() {
   const { roomId } = useParams<{ roomId: string }>()
   const navigate = useNavigate()
   const { playerId, playerName, myRole, gameState, fishjamToken, lastTranscript } = useGameStore()
+  const isNarratorSpeaking = useGameStore((s) => s.isNarratorSpeaking)
   const { send, wsRef } = useGameSocket()
   const { metrics: faceMetrics, setVideoElement, startAnalysis, stopAnalysis, onMetrics } = useFaceAnalysis()
   const { speak: botSpeak } = useBotTTS()
@@ -173,10 +174,10 @@ export function RoomPage() {
           <div className="mb-4 space-y-3">
             {/* Live subtitles */}
             <div className="bg-black/60 rounded-lg px-4 py-3 min-h-[48px] flex items-center">
-              {lastTranscript ? (
-                <p className={`text-sm ${lastTranscript.speaker === 'gemini' ? 'text-amber-400' : 'text-blue-400'}`}>
-                  <span className="font-bold">{lastTranscript.speaker === 'gemini' ? 'Game Master' : 'You'}:</span>{' '}
-                  {lastTranscript.text}
+              {lastTranscript?.speaker === 'gemini' ? (
+                <p className="text-sm text-amber-400 flex items-center gap-2">
+                  {isNarratorSpeaking && <span className="w-2 h-2 bg-amber-400 rounded-full animate-pulse flex-shrink-0" />}
+                  <span><span className="font-bold">Game Master:</span>{' '}{lastTranscript.text}</span>
                 </p>
               ) : (
                 <p className="text-sm text-[#555] italic">Listening...</p>
@@ -210,14 +211,16 @@ export function RoomPage() {
                 )}
               </div>
               <button
-                onClick={() => toggleMicrophoneMute()}
+                onClick={() => !isNarratorSpeaking && toggleMicrophoneMute()}
                 className={`flex items-center gap-2 px-4 py-2 rounded-full font-bold text-xs transition-all duration-200 ${
-                  isMicrophoneMuted
-                    ? 'bg-red-600/80 hover:bg-red-600 text-white'
-                    : 'bg-green-600/80 hover:bg-green-600 text-white animate-pulse'
+                  isNarratorSpeaking
+                    ? 'bg-indigo-600/80 text-white cursor-not-allowed'
+                    : isMicrophoneMuted
+                      ? 'bg-red-600/80 hover:bg-red-600 text-white'
+                      : 'bg-green-600/80 hover:bg-green-600 text-white animate-pulse'
                 }`}
               >
-                {isMicrophoneMuted ? 'MIC OFF' : 'LIVE'}
+                {isNarratorSpeaking ? 'NARRATOR' : isMicrophoneMuted ? 'MIC OFF' : 'LIVE'}
               </button>
             </div>
           </div>
@@ -228,6 +231,7 @@ export function RoomPage() {
           <Countdown
             duration={PHASE_DURATIONS[gameState.phase]!}
             phase={gameState.phase}
+            paused={isNarratorSpeaking}
           />
         )}
 

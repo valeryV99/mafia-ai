@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Player, Role } from '@mafia-ai/types'
 import { Button } from '@/shared/ui'
+import { useGameStore } from '@/entities/game'
 
 interface NightPanelProps {
   players: Player[]
@@ -23,6 +24,7 @@ const roleConfirm: Partial<Record<Role, string>> = {
 
 export function NightPanel({ players, currentPlayerId, myRole, onAction }: NightPanelProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const investigationResult = useGameStore((s) => s.investigationResult)
   const prompt = rolePrompts[myRole]
   if (!prompt) return null
 
@@ -35,7 +37,17 @@ export function NightPanel({ players, currentPlayerId, myRole, onAction }: Night
         <div className="text-center">
           <span className="text-2xl">✓</span>
           <h3 className="text-green-400 font-bold mt-1">{roleConfirm[myRole]}: {target?.name}</h3>
-          <p className="text-[#666] text-xs mt-2">Waiting for other players...</p>
+          {myRole === 'detective' ? (
+            investigationResult ? (
+              <p className={`text-sm font-bold mt-2 ${investigationResult.targetRole === 'mafia' ? 'text-red-400' : 'text-green-400'}`}>
+                {investigationResult.targetName} is {investigationResult.targetRole.toUpperCase()}
+              </p>
+            ) : (
+              <p className="text-[#666] text-xs mt-2">Waiting for result...</p>
+            )
+          ) : (
+            <p className="text-[#666] text-xs mt-2">Waiting for other players...</p>
+          )}
         </div>
       </div>
     )

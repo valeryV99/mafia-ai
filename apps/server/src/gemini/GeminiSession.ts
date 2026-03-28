@@ -101,6 +101,7 @@ export class GeminiSession {
   private onAudioCallback: ((audio: Buffer) => void) | null = null
   private onCommandCallback: ((cmd: Record<string, string>) => void) | null = null
   private onTranscriptCallback: ((speaker: 'gemini' | 'player', text: string) => void) | null = null
+  private onTurnCompleteCallback: (() => void) | null = null
   private onCloseCallback: (() => void) | null = null
   private audioChunkCount = 0
   private totalAudioBytes = 0
@@ -216,6 +217,7 @@ export class GeminiSession {
           log('turn', `Complete (${this.audioChunkCount} chunks, ${(this.totalAudioBytes / 1024).toFixed(1)}KB audio)`)
           this.audioChunkCount = 0
           this.totalAudioBytes = 0
+          this.onTurnCompleteCallback?.()
         }
       }
 
@@ -293,6 +295,10 @@ export class GeminiSession {
 
   onTranscript(cb: (speaker: 'gemini' | 'player', text: string) => void) {
     this.onTranscriptCallback = cb
+  }
+
+  onTurnComplete(cb: () => void) {
+    this.onTurnCompleteCallback = cb
   }
 
   onClose(cb: () => void) {
