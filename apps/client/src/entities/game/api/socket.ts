@@ -49,6 +49,9 @@ export function useGameSocket() {
         // Binary message = Gemini audio
         if (event.data instanceof Blob) {
           const buffer = await event.data.arrayBuffer()
+          if (buffer.byteLength > 0) {
+            console.log(`[AUDIO-IN] GM audio chunk: ${buffer.byteLength}b`)
+          }
           onBinaryRef.current?.(buffer)
           return
         }

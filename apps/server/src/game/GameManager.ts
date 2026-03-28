@@ -485,9 +485,9 @@ export class GameManager {
       doctorName: doctor?.name || 'none',
     })
 
-    // Build tools with enum constraints on player names — prevents hallucinated targets
-    const playerNames = this.state.players.map((p) => p.name)
-    const tools = buildGameTools(playerNames)
+    // Valid player names are listed in the prompt; tools use plain STRING types
+    // (enum constraints removed — Gemini Live API streaming mode has compatibility issues with enums)
+    const tools = buildGameTools()
 
     this.bridge = new AgentBridge(fishjamId, managementToken, apiKey, 'GameMaster')
     // No allowedPeerIds filter — GM hears all Fishjam participants (skipVAD lets Gemini handle VAD)

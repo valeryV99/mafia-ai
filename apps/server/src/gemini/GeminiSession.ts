@@ -4,11 +4,11 @@ const log = (tag: string, ...args: unknown[]) => console.log(`[Gemini:${tag}]`, 
 const GEMINI_MODEL = 'models/gemini-2.5-flash-native-audio-preview-12-2025'
 
 /**
- * Build tool declarations with dynamic enum constraints.
- * Passing valid player names as enums significantly reduces hallucinated names
- * and ensures tool calls reference actual game participants.
+ * Build tool declarations for the Game Master.
+ * Player names are listed in the prompt (not as enums) to avoid compatibility issues
+ * with Gemini Live API streaming mode.
  */
-export function buildGameTools(playerNames: string[]) {
+export function buildGameTools() {
   return [
     {
       name: 'night_kill',
@@ -16,8 +16,7 @@ export function buildGameTools(playerNames: string[]) {
       parameters: {
         type: 'OBJECT',
         properties: {
-          target: { type: 'STRING', description: 'Player to eliminate', enum: playerNames },
-          voter: { type: 'STRING', description: 'Mafia player making the kill (optional)', enum: playerNames },
+          target: { type: 'STRING', description: 'Name of the player to eliminate' },
         },
         required: ['target'],
       },
@@ -28,8 +27,7 @@ export function buildGameTools(playerNames: string[]) {
       parameters: {
         type: 'OBJECT',
         properties: {
-          target: { type: 'STRING', description: 'Player to investigate', enum: playerNames },
-          voter: { type: 'STRING', description: 'The detective (optional)', enum: playerNames },
+          target: { type: 'STRING', description: 'Name of the player to investigate' },
         },
         required: ['target'],
       },
@@ -40,8 +38,7 @@ export function buildGameTools(playerNames: string[]) {
       parameters: {
         type: 'OBJECT',
         properties: {
-          target: { type: 'STRING', description: 'Player to protect', enum: playerNames },
-          voter: { type: 'STRING', description: 'The doctor (optional)', enum: playerNames },
+          target: { type: 'STRING', description: 'Name of the player to protect' },
         },
         required: ['target'],
       },
@@ -53,7 +50,7 @@ export function buildGameTools(playerNames: string[]) {
     },
     {
       name: 'start_voting',
-      description: 'Transition from day discussion to voting. Call after sufficient discussion (30+ seconds).',
+      description: 'Transition from day discussion to voting. Call after sufficient discussion.',
       parameters: { type: 'OBJECT', properties: {} },
     },
     {
@@ -62,33 +59,33 @@ export function buildGameTools(playerNames: string[]) {
       parameters: {
         type: 'OBJECT',
         properties: {
-          voter: { type: 'STRING', description: 'Player casting the vote', enum: playerNames },
-          target: { type: 'STRING', description: 'Player being voted against', enum: playerNames },
+          voter: { type: 'STRING', description: 'Name of the player casting the vote' },
+          target: { type: 'STRING', description: 'Name of the player being voted against' },
         },
         required: ['voter', 'target'],
       },
     },
     {
       name: 'update_suspicion',
-      description: 'Update suspicion level for a player based on speech, behavior, contradictions, and face analysis data.',
+      description: 'Update suspicion level for a player based on speech, behavior, and face analysis data.',
       parameters: {
         type: 'OBJECT',
         properties: {
-          player: { type: 'STRING', description: 'Player name', enum: playerNames },
+          player: { type: 'STRING', description: 'Name of the player' },
           score: { type: 'NUMBER', description: 'Suspicion 1 (innocent) to 10 (highly suspicious)' },
-          reason: { type: 'STRING', description: 'Brief reason: "defensive when questioned", "contradicted earlier claim"' },
+          reason: { type: 'STRING', description: 'Brief reason for the score' },
         },
         required: ['player', 'score', 'reason'],
       },
     },
     {
       name: 'behavioral_note',
-      description: 'Record a behavioral observation — contradictions, alliances, emotional signals from face analysis, voice patterns.',
+      description: 'Record a behavioral observation about a player — contradictions, emotional signals, voice patterns.',
       parameters: {
         type: 'OBJECT',
         properties: {
-          player: { type: 'STRING', description: 'Player name', enum: playerNames },
-          note: { type: 'STRING', description: 'Observation: "Changed story", "High stress when accused", "Avoiding eye contact"' },
+          player: { type: 'STRING', description: 'Name of the player' },
+          note: { type: 'STRING', description: 'Observation' },
         },
         required: ['player', 'note'],
       },
@@ -107,21 +104,16 @@ export class GeminiSession {
   private audioChunkCount = 0
   private totalAudioBytes = 0
   private systemPrompt = ''
-  private tools: ReturnType<typeof buildGameTools> = []
-  private voiceName = 'Orus'
 
   constructor(apiKey: string) {
     this.apiKey = apiKey
   }
 
-  async connect(systemPrompt: string, tools?: ReturnType<typeof buildGameTools>, voiceName?: string): Promise<void> {
+  async connect(systemPrompt: string): Promise<void> {
     this.systemPrompt = systemPrompt
-    if (tools) this.tools = tools
-    if (voiceName) this.voiceName = voiceName
-
     const url = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${this.apiKey}`
 
-    log('connect', `Connecting to ${GEMINI_MODEL} (voice: ${this.voiceName})...`)
+    log('connect', `Connecting to ${GEMINI_MODEL}...`)
 
     return new Promise((resolve, reject) => {
       this.ws = new WebSocket(url)
@@ -137,18 +129,17 @@ export class GeminiSession {
               },
               generationConfig: {
                 responseModalities: ['AUDIO'],
-                temperature: 0.8,
                 speechConfig: {
                   voiceConfig: {
                     prebuiltVoiceConfig: {
-                      voiceName: this.voiceName,
+                      voiceName: 'Orus',
                     },
                   },
                 },
               },
               inputAudioTranscription: {},
               outputAudioTranscription: {},
-              tools: [{ functionDeclarations: this.tools }],
+              tools: [{ functionDeclarations: buildGameTools() }],
             },
           })
         )
@@ -171,20 +162,16 @@ export class GeminiSession {
           return
         }
 
-        // Tool calls — Gemini requests game actions
         const toolCall = msg.toolCall
         if (toolCall) {
           const functionCalls = toolCall.functionCalls || []
           for (const fc of functionCalls) {
             log('toolCall', `${fc.name}(${JSON.stringify(fc.args)})`)
             this.onCommandCallback?.({ action: fc.name, ...fc.args })
-
-            // Return structured response so Gemini knows the action result
-            this.sendToolResponse(fc.id, fc.name, { success: true, action: fc.name })
+            this.sendToolResponse(fc.id, fc.name, { success: true })
           }
         }
 
-        // Audio output from Gemini
         const parts = msg.serverContent?.modelTurn?.parts
         if (parts) {
           for (const part of parts) {
@@ -203,21 +190,18 @@ export class GeminiSession {
           }
         }
 
-        // Input transcription (STT of what player said)
         if (msg.serverContent?.inputTranscription?.text) {
           const text = msg.serverContent.inputTranscription.text
           log('heard', `"${text}"`)
           this.onTranscriptCallback?.('player', text)
         }
 
-        // Output transcription (TTS text of what Gemini said)
         if (msg.serverContent?.outputTranscription?.text) {
           const text = msg.serverContent.outputTranscription.text
           log('said', `"${text}"`)
           this.onTranscriptCallback?.('gemini', text)
         }
 
-        // Turn complete — Gemini finished speaking
         if (msg.serverContent?.turnComplete) {
           log('turn', `Complete (${this.audioChunkCount} chunks, ${(this.totalAudioBytes / 1024).toFixed(1)}KB audio)`)
           this.audioChunkCount = 0
