@@ -12,6 +12,7 @@ import { VoteTracker } from '@/widgets/vote-tracker'
 import { NightPanel } from '@/features/night-action'
 import { VotePanel } from '@/features/vote'
 import { StartButton } from '@/features/start-game'
+import { VictoryConfetti, NightShaderOverlay } from '@/widgets/gpu-effects'
 import type { Phase } from '@mafia-ai/types'
 
 const PHASE_DURATIONS: Partial<Record<Phase, number>> = {
@@ -164,6 +165,8 @@ export function RoomPage() {
   return (
     <div className={`min-h-screen text-white font-[system-ui,sans-serif] transition-[background] duration-1000 ${isNight ? 'bg-[#05051a]' : 'bg-[#0a0a1a]'}`}>
       <PhaseOverlay phase={gameState.phase} />
+      <NightShaderOverlay isNight={isNight} />
+      <VictoryConfetti winner={isGameOver ? gameState.winner : null} />
 
       <div className="max-w-[900px] mx-auto pt-[60px] px-5 pb-5">
         {/* Room header */}

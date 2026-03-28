@@ -82,6 +82,13 @@ app.get('/test-gemini', async (c) => {
   }
 })
 
+process.on('uncaughtException', (err) => {
+  console.error('[SERVER] Uncaught exception:', err)
+})
+process.on('unhandledRejection', (reason) => {
+  console.error('[SERVER] Unhandled rejection:', reason)
+})
+
 const server = Bun.serve<WsData>({
   port: Number(process.env.PORT) || 3001,
   fetch(req, server) {

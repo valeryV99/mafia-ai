@@ -38,6 +38,7 @@ export function VideoGrid({ players, playerId, playerName, localPeer, remotePeer
   const suspicions = useGameStore((s) => s.suspicions)
   const currentSpeakerId = useGameStore((s) => s.currentSpeakerId)
   const playerTranscripts = useGameStore((s) => s.playerTranscripts)
+  const playerStress = useGameStore((s) => s.playerStress)
 
   // Build a map: playerName → Fishjam stream
   const streamByName = new Map<string, MediaStream | null>()
@@ -83,6 +84,7 @@ export function VideoGrid({ players, playerId, playerName, localPeer, remotePeer
               suspicion={suspicions[player.id]}
               isSpeaking={player.id === currentSpeakerId}
               transcript={playerTranscripts[player.name]}
+              stressLevel={playerStress[player.id] ?? 0}
             />
           </div>
         )

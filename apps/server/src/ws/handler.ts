@@ -127,7 +127,15 @@ export async function handleClientEvent(
     }
 
     case 'face_metrics': {
-      // Face metrics disabled
+      const game = findGameByPlayer(ws.data.playerId)
+      if (game) {
+        game.handleFaceMetrics(ws.data.playerId, {
+          stress: event.stress,
+          surprise: event.surprise,
+          happiness: event.happiness,
+          lookingAway: event.lookingAway,
+        })
+      }
       break
     }
 

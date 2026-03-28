@@ -50,6 +50,7 @@ export type ServerEvent =
   | { type: 'transcript_clear' }
   | { type: 'suspicion_update'; playerId: string; playerName: string; score: number; reason: string }
   | { type: 'behavioral_note'; playerName: string; note: string }
+  | { type: 'stress_alert'; playerId: string; playerName: string; level: number }
   | { type: 'bot_speech'; playerName: string; playerId: string; message: string }
   | { type: 'agent_mute_changed'; activeAgentId: string | null }
   | { type: 'agents_mute_changed'; muted: boolean }

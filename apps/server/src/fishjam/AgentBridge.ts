@@ -62,7 +62,6 @@ export class AgentBridge {
     this.log = makeLog(label)
     // Fix: assign this.name so log statements referencing it work correctly
     this.name = label
-    this.log('init', 'AgentBridge created')
   }
 
   async start(
@@ -88,7 +87,6 @@ export class AgentBridge {
 
     const agentTrack = agent.createTrack(GeminiIntegration.geminiOutputAudioSettings)
     this.agentTrackId = agentTrack.id
-    this.log('start', `Agent track created: ${agentTrack.id}`)
 
     const sessionConfig: any = {
       responseModalities: [Modality.AUDIO],
@@ -121,6 +119,9 @@ export class AgentBridge {
           const reason = e?.reason || 'none'
           this.log('gemini', `Session CLOSED for ${this.name}: code=${code} reason=${reason}`)
           this.geminiSession = null
+          // Cancel timers that would fire stale callbacks after session death
+          if (this.audioSilenceTimer) { clearTimeout(this.audioSilenceTimer); this.audioSilenceTimer = null }
+          this.narratorSpeaking = false
           if (!this.intentionalDisconnect && this.reconnectAttempts < this.MAX_RECONNECT_ATTEMPTS) {
             this.reconnectAttempts++
             this.log('gemini', `Reconnecting Gemini session (attempt ${this.reconnectAttempts}/${this.MAX_RECONNECT_ATTEMPTS}) in ${this.RECONNECT_DELAY_MS}ms...`)
@@ -142,20 +143,10 @@ export class AgentBridge {
       return
     }
 
-    let trackDataCount = 0
-    let lastTrackLogAt = 0
     agent.on('trackData', (event: any) => {
       if (this.muteInput) return
 
       const { peerId, data } = event
-      trackDataCount++
-
-      // Log first trackData and then every 5 seconds to confirm audio is flowing
-      const now = Date.now()
-      if (trackDataCount === 1 || now - lastTrackLogAt > 5000) {
-        this.log('trackData', `[${skipVAD ? 'native-vad' : 'floor-vad'}] receiving audio from peer ${peerId} (chunk #${trackDataCount}, ${data.length}b)`)
-        lastTrackLogAt = now
-      }
 
       if (skipVAD) {
         // Native VAD mode: only forward audio from allowed peers, let Gemini decide when to respond
@@ -169,36 +160,17 @@ export class AgentBridge {
         return
       }
 
-      // Log each new peerId seen (once per peer)
-      if (!this.seenPeerIds.has(peerId)) {
-        this.seenPeerIds.add(peerId)
-        const allowed = this.allowedPeerIds === null ? 'YES(no filter)' : this.allowedPeerIds.has(peerId) ? 'YES' : 'NO'
-        // Fix: was `log(...)` (undefined) — changed to `this.log(...)`
-        this.log('audio', `[${this.name}] New peer ${peerId.slice(0, 8)} → allowed: ${allowed}`)
-      }
-
       // Only forward audio from allowed (human) peers
       if (this.allowedPeerIds !== null && !this.allowedPeerIds.has(peerId)) return
 
       if (this.activeSpeakerId === null) {
         if (this.hasVoice(data)) {
           this.activeSpeakerId = peerId
-          this.log('vad', `[${this.name}] Floor acquired by peer ${peerId.slice(0, 8)} — audio will flow to Gemini (narratorSpeaking=${this.narratorSpeaking})`)
         }
       }
 
       if (this.activeSpeakerId === peerId) {
-        if (this.narratorSpeaking) {
-          if (!this._audioBlockedLogged) {
-            this.log('audio', `[${this.name}] BLOCKED player audio (narratorSpeaking) from peer ${peerId.slice(0, 8)}`)
-            this._audioBlockedLogged = true
-          }
-          return
-        }
-        if (this._audioBlockedLogged) {
-          this.log('audio', `[${this.name}] Audio UNBLOCKED — forwarding to Gemini`)
-          this._audioBlockedLogged = false
-        }
+        if (this.narratorSpeaking) return
 
         this.geminiSession?.sendRealtimeInput({
           audio: { mimeType: GeminiIntegration.inputMimeType, data: Buffer.from(data).toString('base64') },
@@ -207,7 +179,6 @@ export class AgentBridge {
         if (this.silenceTimeout) clearTimeout(this.silenceTimeout)
         if (!this.hasVoice(data)) {
           this.silenceTimeout = setTimeout(() => {
-            this.log('vad', `Floor released by peer ${peerId}`)
             this.activeSpeakerId = null
           }, this.SILENCE_THRESHOLD)
         }
@@ -217,23 +188,13 @@ export class AgentBridge {
     this.log('start', 'Audio bridge active')
   }
 
-  private audioChunkCount = 0
-  private lastAudioLogAt = 0
-  private _audioBlockedLogged = false
-
   private handleGeminiMessage(msg: any) {
     const parts = msg.serverContent?.modelTurn?.parts
 
     if (parts) {
       for (const part of parts) {
         if (part.inlineData?.data) {
-          this.audioChunkCount++
           const pcmData = Buffer.from(part.inlineData.data, 'base64')
-          const now = Date.now()
-          if (this.audioChunkCount === 1 || now - this.lastAudioLogAt > 3000) {
-            this.log('audio', `chunk #${this.audioChunkCount} — ${pcmData.length}b, muteOutput=${this.muteOutput}`)
-            this.lastAudioLogAt = now
-          }
           if (!this.muteOutput && this.agent && this.agentTrackId) {
             this.agent.sendData(this.agentTrackId as any, pcmData)
           }
@@ -259,13 +220,11 @@ export class AgentBridge {
     // Tool calls — batch all responses in one sendToolResponse
     if (msg.toolCall) {
       const functionCalls = msg.toolCall.functionCalls || []
-      this.log('toolCall', `[${this.name}] Received ${functionCalls.length} tool call(s): ${functionCalls.map((fc: any) => fc.name).join(', ')}`)
       for (const fc of functionCalls) {
-        this.log('toolCall', `[${this.name}] → ${fc.name}(${JSON.stringify(fc.args)}) muteIn=${this.muteInput} muteOut=${this.muteOutput}`)
+        this.log('toolCall', `[${this.name}] → ${fc.name}(${JSON.stringify(fc.args)})`)
         this.callbacks.onToolCall?.(fc.name, fc.args || {})
       }
       if (functionCalls.length > 0) {
-        this.log('toolCall', `[${this.name}] Sending tool response for ${functionCalls.length} call(s)`)
         this.geminiSession?.sendToolResponse({
           functionResponses: functionCalls.map((fc: any) => ({
             id: fc.id, name: fc.name, response: { success: true },
@@ -292,7 +251,6 @@ export class AgentBridge {
       if (!this.narratorSpeaking) {
         this.narratorStartedAt = Date.now()
         this.log('narrator', `[${this.name}] SPEAKING — first chunk: "${text.slice(0, 60)}"`)
-        this._audioBlockedLogged = false
       }
       this.narratorSpeaking = true
       // Only fire transcript callback when output is not muted
@@ -330,7 +288,6 @@ export class AgentBridge {
     // Flush any sendText() calls that were queued while narrator was speaking
     if (this.pendingTextQueue.length > 0) {
       const next = this.pendingTextQueue.shift()!
-      this.log('sendText', `[${this.name}] Flushing queued message: "${next.slice(0, 80)}" (${this.pendingTextQueue.length} remaining)`)
       this._sendTextNow(next)
     }
   }
@@ -348,8 +305,6 @@ export class AgentBridge {
   allowPeer(peerId: string) {
     if (!this.allowedPeerIds) this.allowedPeerIds = new Set()
     this.allowedPeerIds.add(peerId)
-    // Fix: was `log(...)` (undefined) — changed to `this.log(...)`
-    this.log('audio', `[${this.name}] Allowed peer ${peerId.slice(0, 8)} (total: ${this.allowedPeerIds.size})`)
   }
 
   afterNarratorFinishes(fn: () => void) {
@@ -403,7 +358,6 @@ export class AgentBridge {
 
   setMuteInput(muted: boolean) {
     this.muteInput = muted
-    this.log('mute', `Input ${muted ? 'MUTED' : 'UNMUTED'}`)
     if (muted) {
       // Reset VAD state so reactivation always starts clean
       this.activeSpeakerId = null
@@ -424,7 +378,6 @@ export class AgentBridge {
 
   setMuteOutput(muted: boolean) {
     this.muteOutput = muted
-    this.log('mute', `Output ${muted ? 'MUTED' : 'UNMUTED'}`)
     // Interrupt any buffered audio already queued in Fishjam when muting mid-speech
     if (muted && this.agent && this.agentTrackId) {
       this.agent.interruptTrack(this.agentTrackId as any)
@@ -458,6 +411,8 @@ export class AgentBridge {
             // Reset narrator state so the game can continue
             this.narratorSpeaking = false
             this.pendingTextQueue = []
+            this.pendingPhaseTransition = null
+            if (this.pendingPhaseTimeout) { clearTimeout(this.pendingPhaseTimeout); this.pendingPhaseTimeout = null }
           },
           onclose: (e: any) => {
             const code = e?.code || 'unknown'

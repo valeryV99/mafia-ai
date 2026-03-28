@@ -10,24 +10,13 @@ export function Countdown({ duration, phase, paused }: CountdownProps) {
   const [remaining, setRemaining] = useState(duration)
 
   useEffect(() => {
-    console.log(`%c[Countdown] phase=${phase} reset to ${duration}s`, 'color: #a78bfa; font-weight: bold')
     setRemaining(duration)
   }, [duration, phase])
 
   useEffect(() => {
-    if (paused) {
-      console.log(`%c[Countdown] PAUSED at ${remaining}s (phase=${phase})`, 'color: #818cf8; font-weight: bold')
-      return
-    }
-    console.log(`%c[Countdown] RUNNING from ${remaining}s (phase=${phase})`, 'color: #34d399; font-weight: bold')
+    if (paused) return
     const interval = setInterval(() => {
-      setRemaining((prev) => {
-        const next = Math.max(0, prev - 1)
-        if (next > 0 && next % 5 === 0) {
-          console.log(`%c[Countdown] ${next}s remaining (phase=${phase})`, 'color: #888')
-        }
-        return next
-      })
+      setRemaining((prev) => Math.max(0, prev - 1))
     }, 1000)
     return () => clearInterval(interval)
   }, [paused])

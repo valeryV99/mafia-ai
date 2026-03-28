@@ -3,6 +3,9 @@ import { useEffect, useRef, useCallback, useState } from 'react'
 const GEMINI_SAMPLE_RATE = 24000
 const MIC_SAMPLE_RATE = 16000
 
+let micSendCount = 0
+let micDropCount = 0
+
 export function useAudioPipeline(wsRef: React.RefObject<WebSocket | null>) {
   // --- Playback (Gemini → speakers) ---
   const playbackCtxRef = useRef<AudioContext | null>(null)
@@ -51,10 +54,12 @@ export function useAudioPipeline(wsRef: React.RefObject<WebSocket | null>) {
     }
 
     node.connect(ctx.destination)
-    console.log('Audio playback started')
   }, [])
 
   const playAudio = useCallback((pcmData: ArrayBuffer) => {
+    if (!geminiSpeaking.current) {
+      console.log(`[GM] Audio received — first chunk (${pcmData.byteLength}b) — GM is speaking`)
+    }
     ensurePlayback()
 
     // Suppress mic while Gemini is speaking to prevent echo feedback
@@ -106,10 +111,15 @@ export function useAudioPipeline(wsRef: React.RefObject<WebSocket | null>) {
       const processor = ctx.createScriptProcessor(4096, 1, 1)
       micProcessorRef.current = processor
 
-      let micSendCount = 0
       processor.onaudioprocess = (e) => {
         if (isMutedRef.current) return
-        if (wsRef.current?.readyState !== WebSocket.OPEN) return
+        if (wsRef.current?.readyState !== WebSocket.OPEN) {
+          micDropCount++
+          if (micDropCount === 1 || micDropCount % 50 === 0) {
+            console.warn(`[MIC] WS not open — dropped ${micDropCount} audio chunks (state=${wsRef.current?.readyState ?? 'null'})`)
+          }
+          return
+        }
 
         const inputData = e.inputBuffer.getChannelData(0)
         const pcm16 = new Int16Array(inputData.length)
@@ -118,14 +128,17 @@ export function useAudioPipeline(wsRef: React.RefObject<WebSocket | null>) {
           pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff
         }
         wsRef.current.send(pcm16.buffer)
-        if (micSendCount++ % 50 === 0) {
-          console.log(`[Mic] Sent chunk #${micSendCount} (${pcm16.buffer.byteLength} bytes)`)
+        micSendCount++
+        if (micSendCount === 1 || micSendCount % 100 === 0) {
+          console.log(`[MIC] Sending audio — chunk #${micSendCount}`)
         }
       }
 
       source.connect(processor)
       processor.connect(ctx.destination)
-      console.log('Mic capture started (muted by default)')
+      micSendCount = 0
+      micDropCount = 0
+      console.log('[MIC] Capture started — sample rate:', MIC_SAMPLE_RATE)
     } catch (err) {
       console.error('Failed to start mic capture:', err)
       isCapturing.current = false
@@ -144,7 +157,7 @@ export function useAudioPipeline(wsRef: React.RefObject<WebSocket | null>) {
 
   const toggleMute = useCallback(() => {
     setIsMuted((prev) => {
-      console.log(prev ? 'Mic UNMUTED' : 'Mic MUTED')
+      console.log(`[MIC] ${prev ? 'Unmuted — now sending audio' : 'Muted — audio paused'}`)
       return !prev
     })
   }, [])

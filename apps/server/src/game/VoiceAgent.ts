@@ -65,10 +65,8 @@ TOOLS USAGE:
     `
 
         this.bridge.on({
-            onTranscript: (speaker, text) => {
-                if (speaker === 'player') console.log(`[VoiceAgent:${this.name}] Heard: "${text}"`)
-                else if (speaker === 'gemini') {
-                    console.log(`[VoiceAgent:${this.name}] Said: "${text}"`)
+            onTranscript: (speaker, _text) => {
+                if (speaker === 'gemini') {
                     onSpeaking?.(true)
                 }
             },
@@ -76,7 +74,6 @@ TOOLS USAGE:
                 onSpeaking?.(false)
             },
             onToolCall: (name, args) => {
-                console.log(`[VoiceAgent:${this.name}] Executing Tool: ${name}`, args)
                 onAction(name, args)
             }
         })
@@ -86,7 +83,6 @@ TOOLS USAGE:
         this.bridge.setMuteInput(true)
 
         this.isConnected = true
-        console.log(`[VoiceAgent:${this.name}] Joined as ${role} with ${tools.length} tools.`)
     }
 
     setMuteInput(muted: boolean) {
@@ -98,32 +94,20 @@ TOOLS USAGE:
     }
 
     sendContext(text: string) {
-        if (!this.isConnected) {
-            console.log(`[VoiceAgent:${this.name}] sendContext called but NOT connected — message lost: "${text.slice(0, 80)}"`)
-            return
-        }
-        console.log(`[VoiceAgent:${this.name}] sendContext: "${text.slice(0, 100)}"`)
+        if (!this.isConnected) return
         this.bridge.sendText(text)
     }
 
     sendSilentContext(text: string) {
-        if (!this.isConnected) {
-            console.log(`[VoiceAgent:${this.name}] sendSilentContext called but NOT connected — message lost: "${text.slice(0, 80)}"`)
-            return
-        }
-        console.log(`[VoiceAgent:${this.name}] sendSilentContext: "${text.slice(0, 100)}"`)
+        if (!this.isConnected) return
         this.bridge.sendSilentContext(text)
     }
 
     notifyRole(role: string) {
-        if (!this.isConnected) {
-            console.log(`[VoiceAgent:${this.name}] notifyRole called before connected, skipping`)
-            return
-        }
+        if (!this.isConnected) return
         this.bridge.sendSilentContext(
             `[SYSTEM] Your secret role is: ${role}. Keep it completely secret. Do not say anything about your role. Act accordingly.`
         )
-        console.log(`[VoiceAgent:${this.name}] Notified of role: ${role}`)
     }
 
     disconnect() {
