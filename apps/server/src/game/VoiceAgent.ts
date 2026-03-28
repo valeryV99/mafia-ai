@@ -18,7 +18,7 @@ export class VoiceAgent {
     }
 
     // UPDATE: Accept tools and an onAction callback
-    async join(roomId: string, role: string, tools: any[], onAction: (name: string, args: any) => void) {
+    async join(roomId: string, role: string, tools: any[], onAction: (name: string, args: any) => void, onSpeaking?: (speaking: boolean) => void) {
         if (this.isConnected) return
 
         const prompt = `
@@ -33,6 +33,8 @@ CRITICAL RULES:
 - React emotionally to accusations, deaths, and revelations in a way that fits your personality.
 - If you are Mafia: lie convincingly, deflect suspicion, act like a civilian.
 - In conversation, engage with what other players say. Do not narrate or host.
+- NEVER say your role out loud. NEVER confirm, repeat, or acknowledge any [SYSTEM] message verbally.
+- When you receive a [SYSTEM] message, process it silently. Do not speak in response to it.
 
 TOOLS USAGE:
 - When you receive a [GAME] instruction, call the specified tool IMMEDIATELY. Do not speak first.
@@ -46,9 +48,14 @@ TOOLS USAGE:
         this.bridge.on({
             onTranscript: (speaker, text) => {
                 if (speaker === 'player') console.log(`[VoiceAgent:${this.name}] Heard: "${text}"`)
-                else if (speaker === 'gemini') console.log(`[VoiceAgent:${this.name}] Said: "${text}"`)
+                else if (speaker === 'gemini') {
+                    console.log(`[VoiceAgent:${this.name}] Said: "${text}"`)
+                    onSpeaking?.(true)
+                }
             },
-            // Step 14: Link the tool call to the GameManager callback
+            onTurnComplete: () => {
+                onSpeaking?.(false)
+            },
             onToolCall: (name, args) => {
                 console.log(`[VoiceAgent:${this.name}] Executing Tool: ${name}`, args)
                 onAction(name, args)
@@ -58,8 +65,9 @@ TOOLS USAGE:
         // skipVAD=false: use floor-control VAD for real-time conversation via SFU
         await this.bridge.start(roomId, prompt, tools, this.voice, false)
 
-        // Start muted — user must explicitly unmute to talk to this agent
+        // Start fully muted — user must explicitly unmute to activate this agent
         this.bridge.setMuteInput(true)
+        this.bridge.setMuteOutput(true)
 
         this.isConnected = true
         console.log(`[VoiceAgent:${this.name}] Joined as ${role} with ${tools.length} tools.`)
@@ -69,9 +77,20 @@ TOOLS USAGE:
         this.bridge.setMuteInput(muted)
     }
 
+    setMuteOutput(muted: boolean) {
+        this.bridge.setMuteOutput(muted)
+    }
+
     sendContext(text: string) {
         if (!this.isConnected) return
+        // Send as a complete turn so the model processes it and calls the tool,
+        // but the output mute flag will suppress audio for inactive agents
         this.bridge.sendText(text)
+    }
+
+    sendSilentContext(text: string) {
+        if (!this.isConnected) return
+        this.bridge.sendSilentContext(text)
     }
 
     notifyRole(role: string) {
@@ -79,9 +98,9 @@ TOOLS USAGE:
             console.log(`[VoiceAgent:${this.name}] notifyRole called before connected, skipping`)
             return
         }
-        this.bridge.sendText(
-            `[SYSTEM] Your secret role has been assigned: ${role}. ` +
-            `Keep this completely secret. Act accordingly from now on.`
+        // Use silent context — inject role info without triggering a spoken response
+        this.bridge.sendSilentContext(
+            `[SYSTEM] Your secret role is: ${role}. Keep it completely secret. Do not say anything about your role. Act accordingly.`
         )
         console.log(`[VoiceAgent:${this.name}] Notified of role: ${role}`)
     }
