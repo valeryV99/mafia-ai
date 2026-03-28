@@ -183,6 +183,7 @@ export class AgentBridge {
         // Speaker identification via peerId — notify Gemini when speaker changes
         if (this.hasVoice(data) && peerId !== currentSpeakerPeerId) {
           currentSpeakerPeerId = peerId
+          this.activeSpeakerId = peerId  // sync for onTranscript speaker attribution
           const speakerName = this.callbacks.onSpeakerChanged?.(peerId)
           if (speakerName) {
             this.geminiSession.sendClientContent({ turns: [{ role: 'user', parts: [{ text: `[SPEAKER] ${speakerName} is now speaking.` }] }], turnComplete: false })
@@ -193,7 +194,10 @@ export class AgentBridge {
         // Reset speaker after 2s silence
         if (this.hasVoice(data) && peerId === currentSpeakerPeerId) {
           if (speakerSilenceTimer) clearTimeout(speakerSilenceTimer)
-          speakerSilenceTimer = setTimeout(() => { currentSpeakerPeerId = null }, 2000)
+          speakerSilenceTimer = setTimeout(() => {
+            currentSpeakerPeerId = null
+            this.activeSpeakerId = null
+          }, 2000)
         }
 
         this.geminiSession.sendRealtimeInput({
