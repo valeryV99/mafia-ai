@@ -62,6 +62,7 @@ app.get('/test-gemini', async (c) => {
     await session.connect(
       buildGameMasterPrompt({
         players: ['Alice', 'Bob', 'Charlie', 'Dave'],
+        botNames: [],
         mafiaNames: ['Bob'],
         detectiveName: 'Charlie',
         doctorName: 'Dave',

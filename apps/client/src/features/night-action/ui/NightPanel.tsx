@@ -1,21 +1,17 @@
-import { useState } from 'react'
 import { useGameStore } from '@/entities/game'
 
-const ROLE_LABELS: Record<string, string> = {
-  mafia: 'Choose who to eliminate',
-  detective: 'Choose who to investigate',
-  doctor: 'Choose who to protect',
+const ROLE_VOICE_PROMPT: Record<string, string> = {
+  mafia: 'Say the name of who you want to eliminate',
+  detective: 'Say the name of who you want to investigate',
+  doctor: 'Say the name of who you want to protect',
 }
 
-interface NightPanelProps {
-  onAction: (targetId: string) => void
-}
+export function NightPanel() {
+  const { myRole } = useGameStore()
+  const nightActionWindowOpen = useGameStore((s) => s.nightActionWindowOpen)
+  const nightActionSubmitted = useGameStore((s) => s.nightActionSubmitted)
 
-export function NightPanel({ onAction }: NightPanelProps) {
-  const { gameState, playerId, myRole } = useGameStore()
-  const [submitted, setSubmitted] = useState(false)
-
-  if (!gameState || !playerId || !myRole) return null
+  if (!myRole) return null
 
   if (myRole === 'civilian') {
     return (
@@ -25,39 +21,31 @@ export function NightPanel({ onAction }: NightPanelProps) {
     )
   }
 
-  if (submitted) {
+  if (nightActionSubmitted) {
     return (
-      <div className="p-4 bg-[#1a1a2e] rounded-xl border-2 border-indigo-800 mb-5 text-center">
-        <p className="text-green-400 text-sm font-bold">Action submitted — waiting for dawn...</p>
+      <div className="p-4 bg-[#1a1a2e] rounded-xl border-2 border-green-900 mb-5 text-center">
+        <p className="text-green-400 text-sm font-bold">Action confirmed — waiting for dawn...</p>
       </div>
     )
   }
 
-  const targets = gameState.players.filter(
-    (p) => p.status === 'alive' && p.id !== playerId
-  )
-
-  const handleSelect = (targetId: string) => {
-    onAction(targetId)
-    setSubmitted(true)
+  if (nightActionWindowOpen) {
+    return (
+      <div className="p-4 bg-[#1a1a2e] rounded-xl border-2 border-red-700 mb-5">
+        <div className="flex flex-col items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
+            <p className="text-red-400 text-sm font-bold tracking-wide">MIC LIVE</p>
+          </div>
+          <p className="text-white text-sm text-center">{ROLE_VOICE_PROMPT[myRole]}</p>
+        </div>
+      </div>
+    )
   }
 
   return (
-    <div className="p-4 bg-[#1a1a2e] rounded-xl border-2 border-indigo-800 mb-5">
-      <p className="text-indigo-300 text-sm font-bold mb-3 text-center">
-        {ROLE_LABELS[myRole]}
-      </p>
-      <div className="flex flex-col gap-2">
-        {targets.map((player) => (
-          <button
-            key={player.id}
-            onClick={() => handleSelect(player.id)}
-            className="px-4 py-2 rounded-lg bg-indigo-900 hover:bg-indigo-700 text-white text-sm font-medium transition-colors text-left"
-          >
-            {player.name}
-          </button>
-        ))}
-      </div>
+    <div className="p-4 bg-[#1a1a2e] rounded-xl border-2 border-indigo-800 mb-5 text-center">
+      <p className="text-indigo-400 text-sm italic">Waiting for your turn to act...</p>
     </div>
   )
 }
