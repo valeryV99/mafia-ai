@@ -67,6 +67,17 @@ app.post('/rooms/:roomId/bots', async (c) => {
   return c.json({ added, total: game.players.length })
 })
 
+// Add a voice AI agent to a game room
+app.post('/rooms/:roomId/voice-agent', async (c) => {
+  const { roomId } = c.req.param()
+  const game = getOrCreateGame(roomId)
+  const result = await game.addVoiceAgent()
+  if ('error' in result) {
+    return c.json({ error: result.error }, 400)
+  }
+  return c.json({ added: true, name: result.player.name })
+})
+
 app.get('/test-gemini', async (c) => {
   const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) return c.json({ error: 'GEMINI_API_KEY not set' }, 500)
