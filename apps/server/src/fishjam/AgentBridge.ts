@@ -412,6 +412,13 @@ export class AgentBridge {
         clearTimeout(this.silenceTimeout)
         this.silenceTimeout = null
       }
+      // Cancel the synthetic turnComplete timer — prevents a spurious onTurnDone (and
+      // therefore a spurious advanceAgentChain) if Gemini generated audio while the agent
+      // was output-muted (narratorSpeaking got set but no audible speech occurred).
+      if (this.audioSilenceTimer) {
+        clearTimeout(this.audioSilenceTimer)
+        this.audioSilenceTimer = null
+      }
     }
   }
 

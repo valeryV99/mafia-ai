@@ -32,13 +32,12 @@ export class GameManager {
   private speakingVoiceAgents = new Set<string>()
   private pendingAfterSpeech: (() => void) | null = null
 
-  // Ordered speak chain (Marcus → Sophie → Rex)
-  private readonly AGENT_SPEAK_ORDER = ['Marcus', 'Sophie', 'Rex']
-  private agentChainActive = false
-  private agentChainIndex = 0
+  // Sequential speak chain: agents speak in order, one at a time
+  private agentChainActive = false          // true when agents are in active (non-phase-muted) mode
+  private agentChainIndex = 0               // index into getOrderedVoiceAgentNames()
   // User-controlled global mute for all AI agents
   private agentsManuallyMuted = false
-  // Which agents are individually selected to participate in the speak chain
+  // Which agents are individually selected to participate
   private selectedAgentNames: Set<string> = new Set()
 
   // Bot state (from main)
@@ -239,8 +238,10 @@ export class GameManager {
         if (speaking) {
           this.speakingVoiceAgents.add(player.name)
         } else {
+          // Check wasAudible BEFORE deleting — guards against spurious silent turns
+          const wasAudible = this.speakingVoiceAgents.has(player.name)
           this.speakingVoiceAgents.delete(player.name)
-          this.advanceAgentChain(player.name)
+          this.advanceAgentChain(player.name, wasAudible)
           if (this.speakingVoiceAgents.size === 0 && this.pendingAfterSpeech) {
             const fn = this.pendingAfterSpeech
             this.pendingAfterSpeech = null
@@ -251,12 +252,17 @@ export class GameManager {
       }
     )
 
+    // Backfill already-known human peer IDs so this agent only accepts human audio.
+    // Without this, allowedPeerIds stays null (all peers allowed), and the VAD floor
+    // gets grabbed by other agents' output tracks, blocking human audio from reaching Gemini.
+    for (const peerId of this.fishjamPeerNames.keys()) {
+      agent.allowPeer(peerId)
+    }
+
     this.voiceAgents.set(name, agent)
     this.selectedAgentNames.add(name)
 
-    // Re-run chain so this agent is slotted into the correct position.
-    // Mutes all, then unmutes only the first in order (Marcus → Sophie → Rex).
-    // During night/role_assignment, or when manually muted, the agent stays muted.
+    // Start the ordered speak chain (skipped during night/role_assignment or manual mute).
     if (this.state.phase !== 'night' && this.state.phase !== 'role_assignment' && !this.agentsManuallyMuted) {
       this.startAgentOutputChain()
     }
@@ -292,13 +298,13 @@ export class GameManager {
       this.agentChainActive = false
       this.broadcastEvent({ type: 'speaker_changed', speakerId: null })
     } else {
-      // Reset selection to all agents when turning AI back on
-      // Agents stay muted — they respond only when GM calls address_agent
+      // Reset selection to all agents when turning AI back on, then start the speak chain
       this.voiceAgents.forEach((_, name) => this.selectedAgentNames.add(name))
       this.broadcastEvent({ type: 'agent_selection_changed', selectedAgentIds: this.getSelectedAgentIds() })
+      this.startAgentOutputChain()
     }
     this.broadcastEvent({ type: 'agents_mute_changed', muted })
-    this.log('voiceAgent', `Agents manually ${muted ? 'MUTED' : 'UNMUTED (address-triggered)'}`)
+    this.log('voiceAgent', `Agents manually ${muted ? 'MUTED' : 'UNMUTED'}`)
   }
 
   setAgentSelected(agentId: string, selected: boolean) {
@@ -310,16 +316,18 @@ export class GameManager {
 
     if (!selected) {
       // Must keep at least one agent selected
-      if (this.getOrderedVoiceAgentNames().length <= 1) return
+      if (this.selectedAgentNames.size <= 1) return
       this.selectedAgentNames.delete(agentName)
       this.voiceAgents.get(agentName)?.setMuteInput(true)
       this.voiceAgents.get(agentName)?.setMuteOutput(true)
     } else {
       this.selectedAgentNames.add(agentName)
     }
+    // Restart chain so ordering is correct after selection change
+    this.startAgentOutputChain()
 
     this.broadcastEvent({ type: 'agent_selection_changed', selectedAgentIds: this.getSelectedAgentIds() })
-    this.log('voiceAgent', `Agent ${agentName} ${selected ? 'selected' : 'deselected'}`)
+    this.log('voiceAgent', `Agent ${agentName} ${selected ? 'selected' : 'deselected'} — chain restarted`)
   }
 
   private getSelectedAgentIds(): string[] {
@@ -329,43 +337,51 @@ export class GameManager {
   }
 
   private getOrderedVoiceAgentNames(): string[] {
-    return this.AGENT_SPEAK_ORDER.filter(
-      name => this.voiceAgents.has(name) &&
+    return GameManager.VOICE_AGENT_POOL
+      .map(def => def.name)
+      .filter(name =>
+        this.voiceAgents.has(name) &&
         this.selectedAgentNames.has(name) &&
         this.state.players.find(p => p.name === name && p.status === 'alive')
-    )
+      )
   }
 
+  // Start sequential speak chain: mute all, unmute only the first in order.
   private startAgentOutputChain() {
     const ordered = this.getOrderedVoiceAgentNames()
-    // Mute all agents (input + output)
-    this.voiceAgents.forEach(a => { a.setMuteInput(true); a.setMuteOutput(true) })
-    if (ordered.length === 0) {
-      this.agentChainActive = false
-      return
-    }
+    if (ordered.length === 0) { this.agentChainActive = false; return }
     this.agentChainActive = true
     this.agentChainIndex = 0
-    // Only the first agent is fully active
-    const first = this.voiceAgents.get(ordered[0])
-    if (first) {
-      first.setMuteInput(false)
-      first.setMuteOutput(false)
-    }
-    this.log('chain', `Speak chain started → ${ordered[0]} is active`)
+    this.voiceAgents.forEach(a => { a.setMuteInput(true); a.setMuteOutput(true) })
+    const first = ordered[0]
+    this.voiceAgents.get(first)?.setMuteInput(false)
+    this.voiceAgents.get(first)?.setMuteOutput(false)
+    this.log('chain', `Chain started — active: ${first} (${ordered.join(' → ')})`)
   }
 
-  private advanceAgentChain(fromName: string) {
-    // Mute the agent that just finished speaking
-    const agent = this.voiceAgents.get(fromName)
-    if (agent) { agent.setMuteInput(true); agent.setMuteOutput(true) }
-    this.broadcastEvent({ type: 'speaker_changed', speakerId: null })
-    // Only notify GM during day/voting — during night this would trigger GM speech
-    // that blocks player audio just as action windows open
-    if (this.state.phase !== 'night') {
-      this.bridge?.sendSilentContext(`[SYSTEM] ${fromName} has finished speaking.`)
-    }
-    this.log('voiceAgent', `${fromName} finished speaking — muted`)
+  // Advance the speak chain after an agent finishes speaking.
+  // wasAudible=false means the turn ended silently — stay on current agent.
+  private advanceAgentChain(fromName: string, wasAudible: boolean) {
+    if (!this.agentChainActive) return
+    if (!wasAudible) return
+
+    const ordered = this.getOrderedVoiceAgentNames()
+    if (ordered.length === 0) { this.agentChainActive = false; return }
+
+    const currentIndex = ordered.indexOf(fromName)
+    if (currentIndex === -1) return
+
+    // Mute current agent
+    this.voiceAgents.get(fromName)?.setMuteInput(true)
+    this.voiceAgents.get(fromName)?.setMuteOutput(true)
+
+    // Advance to next (wraps around)
+    const nextIndex = (currentIndex + 1) % ordered.length
+    const nextName = ordered[nextIndex]
+    this.agentChainIndex = nextIndex
+    this.voiceAgents.get(nextName)?.setMuteInput(false)
+    this.voiceAgents.get(nextName)?.setMuteOutput(false)
+    this.log('chain', `Chain advanced: ${fromName} → ${nextName}`)
   }
 
   // kept for backwards-compat with any outstanding client set_active_agent messages
@@ -1541,8 +1557,8 @@ export class GameManager {
       this.voiceAgents.delete(player.name)
       this.selectedAgentNames.delete(player.name)
       this.speakingVoiceAgents.delete(player.name)
-      // Restart chain so the next agent in order takes over
-      if (this.agentChainActive && (this.state.phase === 'day' || this.state.phase === 'voting')) {
+      // Restart chain so eliminated agent is removed from rotation
+      if (this.agentChainActive && !this.agentsManuallyMuted) {
         this.startAgentOutputChain()
       }
       this.broadcastEvent({ type: 'speaker_changed', speakerId: null })
