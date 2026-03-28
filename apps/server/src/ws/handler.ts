@@ -107,8 +107,7 @@ export async function handleClientEvent(
 
     case 'night_action': {
       const game = findGameByPlayer(ws.data.playerId)
-      if (!game) return
-      game.handleNightAction(ws.data.playerId, event.targetId)
+      if (game) game.handleNightAction(ws.data.playerId, event.targetId)
       break
     }
 
@@ -128,14 +127,11 @@ export async function handleClientEvent(
     }
 
     case 'face_metrics': {
-      const game = findGameByPlayer(ws.data.playerId)
-      if (!game) return
-      game.handleFaceMetrics(ws.data.playerId, event)
+      // Face metrics disabled
       break
     }
 
     case 'add_voice_agent': {
-      console.log(`[WS] add_voice_agent received from ${ws.data.playerId}`)
       const game = findGameByPlayer(ws.data.playerId)
       if (game) {
         game.addVoiceAgent()

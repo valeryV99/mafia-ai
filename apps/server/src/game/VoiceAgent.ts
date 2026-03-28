@@ -14,12 +14,29 @@ export class VoiceAgent {
         private persona: string = 'A cautious, observant player who questions everything',
         private voice: string = 'Puck'
     ) {
+        // Fix (from main): label is just the agent name, not 'VoiceAgent:name'
+        // — AgentBridge already prefixes '[AgentBridge:...]' in its logs
         this.bridge = new AgentBridge(fjId, fjToken, apiKey, name)
     }
 
-    // UPDATE: Accept tools and an onAction callback
-    async join(roomId: string, role: string, tools: any[], onAction: (name: string, args: any) => void, onSpeaking?: (speaking: boolean) => void) {
+    allowPeer(peerId: string) {
+        this.bridge.allowPeer(peerId)
+    }
+
+    // Fix (from main): removed allowedPeerIds param — peers are registered via
+    // allowPeer() individually (called by GameManager.mapFishjamPeer).
+    // Added onSpeaking callback so GameManager can track speakingVoiceAgents.
+    async join(
+        roomId: string,
+        role: string,
+        tools: any[],
+        onAction: (name: string, args: any) => void,
+        onSpeaking?: (speaking: boolean) => void
+    ) {
         if (this.isConnected) return
+
+        // Fix (from flow-fixing): allowedPeerIds loop removed — GameManager now
+        // calls allowPeer() directly after mapFishjamPeer, so no bulk allow needed here.
 
         const prompt = `
 You are a human player named ${this.name} in a Mafia party game.
@@ -62,10 +79,12 @@ TOOLS USAGE:
             }
         })
 
+        // Fix (from main): use this.voice instead of hardcoded 'Puck'
         // skipVAD=false: use floor-control VAD for real-time conversation via SFU
         await this.bridge.start(roomId, prompt, tools, this.voice, false)
 
-        // Start fully muted — user must explicitly unmute to activate this agent
+        // Fix (from main): start fully muted — GameManager.setActiveVoiceAgent
+        // explicitly unmutes when this agent's turn comes
         this.bridge.setMuteInput(true)
         this.bridge.setMuteOutput(true)
 
@@ -83,8 +102,6 @@ TOOLS USAGE:
 
     sendContext(text: string) {
         if (!this.isConnected) return
-        // Send as a complete turn so the model processes it and calls the tool,
-        // but the output mute flag will suppress audio for inactive agents
         this.bridge.sendText(text)
     }
 
@@ -98,7 +115,6 @@ TOOLS USAGE:
             console.log(`[VoiceAgent:${this.name}] notifyRole called before connected, skipping`)
             return
         }
-        // Use silent context — inject role info without triggering a spoken response
         this.bridge.sendSilentContext(
             `[SYSTEM] Your secret role is: ${role}. Keep it completely secret. Do not say anything about your role. Act accordingly.`
         )

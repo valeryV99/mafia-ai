@@ -20,34 +20,50 @@ export class AgentBridge {
   private geminiSession: Session | null = null
   private callbacks: AgentBridgeCallbacks = {}
   private muteOutput = false
+  private name: string
   private muteInput = false
 
   // VAD floor control
   private activeSpeakerId: string | null = null
   private silenceTimeout: ReturnType<typeof setTimeout> | null = null
-  private readonly SILENCE_THRESHOLD = 300 // ms
+  private readonly SILENCE_THRESHOLD = 300
 
+  // Audio filter — only forward audio from known human peers
+  private allowedPeerIds: Set<string> | null = null
   private narratorSpeaking = false
-  private narratorStartedAt = 0
+  private seenPeerIds: Set<string> = new Set()
+
+  // Narrator timing & phase transition (from main)
+  private narratorStartedAt: number = 0
   private pendingPhaseTransition: (() => void) | null = null
   private pendingPhaseTimeout: ReturnType<typeof setTimeout> | null = null
-  private readonly PENDING_PHASE_TIMEOUT_MS = 15_000
+  private readonly PENDING_PHASE_TIMEOUT_MS = 5000
 
-  private log: ReturnType<typeof makeLog>
+  // Fix: log is stored as an instance method via makeLog
+  private log: (tag: string, ...args: unknown[]) => void
 
   constructor(fishjamId: string, managementToken: string, geminiApiKey: string, label: string = 'GM') {
     this.fishjamClient = new FishjamClient({ fishjamId, managementToken })
     this.genAi = GeminiIntegration.createClient({ apiKey: geminiApiKey })
     this.log = makeLog(label)
+    // Fix: assign this.name so log statements referencing it work correctly
+    this.name = label
     this.log('init', 'AgentBridge created')
   }
 
-  async start(roomId: string, systemPrompt: string, tools?: object[], voiceName: string = 'Orus', muteOutput: boolean = false, skipVAD: boolean = false, disableAudioInput: boolean = false): Promise<void> {
+  async start(
+    roomId: string,
+    systemPrompt: string,
+    tools?: object[],
+    voiceName: string = 'Orus',
+    muteOutput: boolean = false,
+    skipVAD: boolean = false,
+    disableAudioInput: boolean = false,
+  ): Promise<void> {
     this.log('start', `Joining room ${roomId.slice(0, 20)}...`)
 
     this.muteOutput = muteOutput
 
-    // 1. Create Fishjam Agent (ghost peer)
     const { agent } = await this.fishjamClient.createAgent(roomId as any, {
       subscribeMode: 'auto',
       output: GeminiIntegration.geminiInputAudioSettings,
@@ -56,22 +72,14 @@ export class AgentBridge {
     await agent.awaitConnected()
     this.log('start', 'Agent connected to Fishjam')
 
-    // 2. Create outgoing audio track for Gemini responses
     const agentTrack = agent.createTrack(GeminiIntegration.geminiOutputAudioSettings)
     this.agentTrackId = agentTrack.id
     this.log('start', `Agent track created: ${agentTrack.id}`)
 
-    // 3. Connect to Gemini Live
-    // UPDATE the sessionConfig to use the passed voiceName
     const sessionConfig: any = {
       responseModalities: [Modality.AUDIO],
-      speechConfig: {
-        voiceConfig: {
-          prebuiltVoiceConfig: { voiceName: voiceName }, // <-- Changed here
-        },
-      },
+      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } },
     }
-
     if (tools && tools.length > 0) {
       sessionConfig.tools = [{ functionDeclarations: tools }]
     }
@@ -94,8 +102,11 @@ export class AgentBridge {
 
     this.log('start', 'Gemini session connected')
 
-    // 4. Bridge: Player audio → Gemini (skipped in text-only mode)
-    if (disableAudioInput) return
+    // Fix: log before early return so the correct message is always emitted
+    if (disableAudioInput) {
+      this.log('start', 'Audio input disabled — text-only input mode')
+      return
+    }
 
     let trackDataCount = 0
     let lastTrackLogAt = 0
@@ -123,11 +134,20 @@ export class AgentBridge {
         return
       }
 
-      // Floor-control VAD (used by GameMaster)
+      // Log each new peerId seen (once per peer)
+      if (!this.seenPeerIds.has(peerId)) {
+        this.seenPeerIds.add(peerId)
+        const allowed = this.allowedPeerIds === null ? 'YES(no filter)' : this.allowedPeerIds.has(peerId) ? 'YES' : 'NO'
+        // Fix: was `log(...)` (undefined) — changed to `this.log(...)`
+        this.log('audio', `[${this.name}] New peer ${peerId.slice(0, 8)} → allowed: ${allowed}`)
+      }
+
+      // Only forward audio from allowed (human) peers
+      if (this.allowedPeerIds !== null && !this.allowedPeerIds.has(peerId)) return
+
       if (this.activeSpeakerId === null) {
         if (this.hasVoice(data)) {
           this.activeSpeakerId = peerId
-          this.log('vad', `Floor taken by peer ${peerId}`)
         }
       }
 
@@ -135,10 +155,7 @@ export class AgentBridge {
         if (this.narratorSpeaking) return
 
         this.geminiSession?.sendRealtimeInput({
-          audio: {
-            mimeType: GeminiIntegration.inputMimeType,
-            data: Buffer.from(data).toString('base64'),
-          },
+          audio: { mimeType: GeminiIntegration.inputMimeType, data: Buffer.from(data).toString('base64') },
         })
 
         if (this.silenceTimeout) clearTimeout(this.silenceTimeout)
@@ -151,17 +168,12 @@ export class AgentBridge {
       }
     })
 
-    if (!disableAudioInput) {
-      this.log('start', 'Audio bridge active')
-    } else {
-      this.log('start', 'Audio input disabled — text-only input mode')
-    }
+    this.log('start', 'Audio bridge active')
   }
 
   private handleGeminiMessage(msg: any) {
     const parts = msg.serverContent?.modelTurn?.parts
 
-    // CRITICAL: Only send audio to Fishjam if muteOutput is FALSE
     if (!this.muteOutput && parts && this.agent && this.agentTrackId) {
       for (const part of parts) {
         if (part.inlineData?.data) {
@@ -171,40 +183,35 @@ export class AgentBridge {
       }
     }
 
-    // Tool calls
+    // Tool calls — batch all responses in one sendToolResponse
     if (msg.toolCall) {
       const functionCalls = msg.toolCall.functionCalls || []
       for (const fc of functionCalls) {
         this.log('toolCall', `${fc.name}(${JSON.stringify(fc.args)})`)
         this.callbacks.onToolCall?.(fc.name, fc.args || {})
-
-        // Send tool response
+      }
+      if (functionCalls.length > 0) {
         this.geminiSession?.sendToolResponse({
-          functionResponses: [{
-            id: fc.id,
-            name: fc.name,
-            response: { success: true },
-          }],
+          functionResponses: functionCalls.map((fc: any) => ({
+            id: fc.id, name: fc.name, response: { success: true },
+          })),
         })
       }
     }
 
-    // Interruption handling
     if (msg.serverContent?.interrupted) {
-      this.log('interrupt', 'Player interrupted Gemini — clearing buffer')
+      this.log('gemini', `[${this.name}] INTERRUPTED`)
       if (this.agent && this.agentTrackId) {
         this.agent.interruptTrack(this.agentTrackId as any)
       }
     }
 
-    // Input transcription (what player said)
     if (msg.serverContent?.inputTranscription?.text) {
       const text = msg.serverContent.inputTranscription.text
       this.log('heard', `peerId="${this.activeSpeakerId ?? 'unknown'}" text="${text}"`)
       this.callbacks.onTranscript?.('player', text, this.activeSpeakerId ?? undefined)
     }
 
-    // Output transcription (what Gemini said)
     if (msg.serverContent?.outputTranscription?.text) {
       const text = msg.serverContent.outputTranscription.text
       if (!this.narratorSpeaking) {
@@ -213,14 +220,16 @@ export class AgentBridge {
       }
       this.narratorSpeaking = true
       this.log('said', `"${text}"`)
-      // Only fire transcript/speaking callbacks when output is not muted
+      // Fix (from main): only fire transcript callback when output is not muted
       if (!this.muteOutput) {
         this.callbacks.onTranscript?.('gemini', text)
       }
     }
 
-    // Turn complete — fire immediately (green light clears on DONE log)
-    if (msg.serverContent?.turnComplete) {
+    // Fix: retain the (msg as any).turnComplete fallback from flow-fixing in case
+    // the Gemini SDK emits a top-level turnComplete (older SDK behaviour)
+    const isTurnComplete = msg.serverContent?.turnComplete || (msg as any).turnComplete
+    if (isTurnComplete) {
       const duration = Date.now() - this.narratorStartedAt
       this.log('narrator', `DONE after ${(duration / 1000).toFixed(1)}s`)
       this.narratorSpeaking = false
@@ -235,22 +244,21 @@ export class AgentBridge {
     }
   }
 
-  // Simple voice activity detection based on audio energy
   private hasVoice(data: Uint8Array): boolean {
     const aligned = new Uint8Array(data.length)
     aligned.set(data)
     if (aligned.length < 2) return false
     const int16 = new Int16Array(aligned.buffer, 0, Math.floor(aligned.length / 2))
     let energy = 0
-    for (let i = 0; i < int16.length; i++) {
-      energy += Math.abs(int16[i])
-    }
-    const avgEnergy = energy / int16.length
+    for (let i = 0; i < int16.length; i++) energy += Math.abs(int16[i])
+    return (energy / int16.length) > 50
+  }
 
-    // DEBUG: Uncomment this to see the numbers in your console
-    // if (avgEnergy > 50) console.log(`[VAD] Energy: ${avgEnergy.toFixed(0)}`)
-
-    return avgEnergy > 50 // <-- Lowered from 500 to 150
+  allowPeer(peerId: string) {
+    if (!this.allowedPeerIds) this.allowedPeerIds = new Set()
+    this.allowedPeerIds.add(peerId)
+    // Fix: was `log(...)` (undefined) — changed to `this.log(...)`
+    this.log('audio', `[${this.name}] Allowed peer ${peerId.slice(0, 8)} (total: ${this.allowedPeerIds.size})`)
   }
 
   afterNarratorFinishes(fn: () => void) {
@@ -320,6 +328,5 @@ export class AgentBridge {
     this.agentTrackId = null
     if (this.silenceTimeout) clearTimeout(this.silenceTimeout)
     if (this.pendingPhaseTimeout) clearTimeout(this.pendingPhaseTimeout)
-    this.pendingPhaseTransition = null
   }
 }

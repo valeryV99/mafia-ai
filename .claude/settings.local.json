@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bunx tsc:*)",
+      "Bash(grep -r \"night_kill\\\\|night_action\\\\|investigate\\\\|doctor_save\" /d/repos/mafia-ai/apps --include=*.ts --include=*.tsx)"
+    ]
+  }
+}
