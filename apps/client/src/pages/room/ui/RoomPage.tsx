@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useGameStore, useGameSocket, useFaceAnalysis, useAudioPipeline } from '@/entities/game'
 import { PHASE_DURATIONS } from '@/entities/game/config/phaseDurations'
@@ -35,13 +36,20 @@ export function RoomPage() {
   const selectedAgentIds = useGameStore((s) => s.selectedAgentIds)
   const nightActionWindowOpen = useGameStore((s) => s.nightActionWindowOpen)
   const { send, wsRef, setOnBinary } = useGameSocket()
-  const { playAudio } = useAudioPipeline(wsRef)
+  const { playAudio, startMicCapture, isMuted: isWsMicMuted, toggleMute: toggleWsMicMute } = useAudioPipeline(wsRef)
   const { metrics: faceMetrics, setVideoElement, startAnalysis, stopAnalysis, onMetrics } = useFaceAnalysis()
 
   const { peerStatus, localPeer, remotePeers, toggleMicrophoneMute, isMicrophoneMuted } =
     useFishjamMediaSession(fishjamToken, playerName)
 
   useGameMasterAudioBinary(setOnBinary, playAudio)
+
+  // Start mic capture for direct WebSocket audio to Game Master
+  useEffect(() => {
+    if (gameState && gameState.phase !== 'lobby') {
+      startMicCapture()
+    }
+  }, [gameState?.phase, startMicCapture])
   useRedirectIfNoPlayerName(playerName, navigate)
   useSocketJoinRoom(roomId, playerName, playerId, send)
   usePhaseMicAutoMute(gameState?.phase, nightActionWindowOpen, isMicrophoneMuted, toggleMicrophoneMute)
@@ -72,8 +80,26 @@ export function RoomPage() {
   const toggleAgentSelected = (agentId: string, selected: boolean) =>
     send({ type: 'set_agent_selected', agentId, selected })
 
+  const handleMicToggle = () => {
+    toggleWsMicMute()
+    toggleMicrophoneMute()
+  }
+
   return (
     <RoomShell isNight={isNight}>
+      {/* Mic mute button — fixed top-right */}
+      <button
+        type="button"
+        onClick={handleMicToggle}
+        className={`fixed top-4 right-4 z-50 px-4 py-2 rounded-full font-bold text-sm transition-all duration-200 ${
+          isWsMicMuted
+            ? 'bg-red-600 hover:bg-red-700 text-white'
+            : 'bg-green-600 hover:bg-green-700 text-white animate-pulse'
+        }`}
+      >
+        {isWsMicMuted ? '🔇 MIC OFF' : '🎤 MIC ON'}
+      </button>
+
       <PhaseOverlay phase={gameState.phase} />
       <GpuErrorBoundary>
         <NightShaderOverlay isNight={isNight} />

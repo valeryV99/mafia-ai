@@ -2,7 +2,6 @@ import type { GameState, Player, Phase, Role, ServerEvent } from '@mafia-ai/type
 import type { ServerWebSocket } from 'bun'
 import { AgentBridge } from '../fishjam/AgentBridge'
 import { buildGameMasterPrompt } from '../gemini/prompts'
-import { buildGameTools } from '../gemini/GeminiSession'
 import { GAME_CONSTANTS } from './constants'
 import { VoiceAgent } from './VoiceAgent'
 
@@ -485,9 +484,16 @@ export class GameManager {
       doctorName: doctor?.name || 'none',
     })
 
-    // Valid player names are listed in the prompt; tools use plain STRING types
-    // (enum constraints removed — Gemini Live API streaming mode has compatibility issues with enums)
-    const tools = buildGameTools()
+    // Original tool definitions — kept minimal for Gemini Live API compatibility
+    const tools = [
+      { name: 'night_kill', description: 'Mafia chooses a player to eliminate during night phase', parameters: { type: 'OBJECT', properties: { target: { type: 'STRING' } }, required: ['target'] } },
+      { name: 'investigate', description: 'Detective investigates a player to learn their role', parameters: { type: 'OBJECT', properties: { target: { type: 'STRING' } }, required: ['target'] } },
+      { name: 'doctor_save', description: 'Doctor protects a player from mafia kill', parameters: { type: 'OBJECT', properties: { target: { type: 'STRING' } }, required: ['target'] } },
+      { name: 'resolve_night', description: 'Called after all night actions are collected to end the night phase', parameters: { type: 'OBJECT', properties: {} } },
+      { name: 'start_voting', description: 'Start voting phase after discussion', parameters: { type: 'OBJECT', properties: {} } },
+      { name: 'cast_vote', description: 'Record a vote from a player', parameters: { type: 'OBJECT', properties: { voter: { type: 'STRING' }, target: { type: 'STRING' } }, required: ['voter', 'target'] } },
+      { name: 'update_suspicion', description: 'Update suspicion level for a player', parameters: { type: 'OBJECT', properties: { player: { type: 'STRING' }, score: { type: 'NUMBER' }, reason: { type: 'STRING' } }, required: ['player', 'score', 'reason'] } },
+    ]
 
     this.bridge = new AgentBridge(fishjamId, managementToken, apiKey, 'GameMaster')
     // No allowedPeerIds filter — GM hears all Fishjam participants (skipVAD lets Gemini handle VAD)
@@ -542,7 +548,9 @@ export class GameManager {
     })
 
     // skipVAD=true: all player audio reaches Gemini continuously (no floor-VAD blocking)
-    await this.bridge.start(this.fishjamRoomId, prompt, tools, 'Orus', false, true)
+    // disableAudioInput=true: player audio reaches Gemini via WebSocket direct (sendPlayerAudioDirect),
+    // NOT via Fishjam trackData — avoids dual-source interference and VAD conflicts
+    await this.bridge.start(this.fishjamRoomId, prompt, tools, 'Orus', false, true, true)
     this.log('startGame', `Bridge READY — Game Master connected`)
 
     setTimeout(() => this.startNight(), GAME_CONSTANTS.ROLE_REVEAL_DELAY)
@@ -1321,8 +1329,9 @@ export class GameManager {
     }
   }
 
-  sendPlayerAudio(_chunk: Buffer) {
-    // No-op: AgentBridge handles audio via Fishjam SFU
+  sendPlayerAudio(chunk: Buffer) {
+    // Forward player mic audio directly to Gemini (bypasses Fishjam SFU for reliability)
+    this.bridge?.sendPlayerAudioDirect(chunk)
   }
 
   private eliminatePlayer(playerId: string) {

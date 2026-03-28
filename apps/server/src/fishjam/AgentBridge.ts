@@ -143,7 +143,27 @@ export class AgentBridge {
       return
     }
 
+    // Debug: log ANY event from the agent
+    const knownEvents = ['trackData', 'trackAdded', 'trackRemoved', 'peerJoined', 'peerLeft', 'disconnected']
+    for (const evt of knownEvents) {
+      agent.on(evt as any, (...args: any[]) => {
+        if (evt !== 'trackData') {
+          this.log('event', `${evt}: ${JSON.stringify(args).slice(0, 200)}`)
+        }
+      })
+    }
+    this.log('start', `Registered listeners for: ${knownEvents.join(', ')}`)
+
+    let trackDataCount = 0
     agent.on('trackData', (event: any) => {
+      trackDataCount++
+      if (trackDataCount === 1) {
+        this.log('audio', `First trackData received from peer=${event.peerId} (${Buffer.from(event.data).length}b) — audio pipeline active`)
+      }
+      if (trackDataCount % 500 === 0) {
+        this.log('audio', `trackData count: ${trackDataCount}, muteInput=${this.muteInput}, geminiAlive=${!!this.geminiSession}`)
+      }
+
       if (this.muteInput) return
 
       const { peerId, data } = event
@@ -151,7 +171,11 @@ export class AgentBridge {
       if (skipVAD) {
         // Native VAD mode: only forward audio from allowed peers, let Gemini decide when to respond
         if (this.allowedPeerIds !== null && !this.allowedPeerIds.has(peerId)) return
-        this.geminiSession?.sendRealtimeInput({
+        if (!this.geminiSession) {
+          if (trackDataCount % 200 === 0) this.log('audio', 'WARNING: No Gemini session — audio dropped')
+          return
+        }
+        this.geminiSession.sendRealtimeInput({
           audio: {
             mimeType: GeminiIntegration.inputMimeType,
             data: Buffer.from(data).toString('base64'),
@@ -354,6 +378,29 @@ export class AgentBridge {
   // Inject context — routes through sendText queue (turnComplete:false caused 1008 disconnects)
   sendSilentContext(message: string) {
     this.sendText(message)
+  }
+
+  // Forward player audio directly to Gemini (bypass Fishjam SFU)
+  private directAudioCount = 0
+  sendPlayerAudioDirect(pcm16: Buffer) {
+    if (!this.geminiSession) {
+      if (this.directAudioCount % 200 === 0) this.log('directAudio', 'WARNING: No Gemini session — audio dropped')
+      this.directAudioCount++
+      return
+    }
+    this.directAudioCount++
+    if (this.directAudioCount === 1) {
+      this.log('directAudio', `First direct audio chunk: ${pcm16.length}b — pipeline active`)
+    }
+    if (this.directAudioCount % 500 === 0) {
+      this.log('directAudio', `chunks sent: ${this.directAudioCount}`)
+    }
+    this.geminiSession.sendRealtimeInput({
+      audio: {
+        mimeType: 'audio/pcm;rate=16000',
+        data: pcm16.toString('base64'),
+      },
+    })
   }
 
   setMuteInput(muted: boolean) {

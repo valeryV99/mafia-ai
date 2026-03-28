@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "bun run --hot src/index.ts",
+    "dev:log": "bun run --hot src/index.ts 2>&1 | tee server.log",
     "start": "bun run src/index.ts"
   },
   "dependencies": {
