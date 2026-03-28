@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback } from 'react'
 import { useGameStore } from '@/entities/game/model/store'
 import type { ServerEvent, ClientEvent } from '@mafia-ai/types'
 
-const WS_URL = import.meta.env.VITE_SERVER_WS_URL || 'ws://localhost:3001/ws'
+const WS_URL = import.meta.env.VITE_SERVER_WS_URL || 'wss://server-production-dd31.up.railway.app/ws'
 const MAX_RECONNECT_RETRIES = 5
 const RECONNECT_DELAY_MS = 2000
 

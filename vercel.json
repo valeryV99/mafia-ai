@@ -1,0 +1,8 @@
+{
+  "buildCommand": "cd apps/client && bun install && bun run build",
+  "outputDirectory": "apps/client/dist",
+  "framework": null,
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
