@@ -153,6 +153,12 @@
 - `mapFishjamPeer()` registers a human peer with all active bridges
 - VoiceAgent added before game start → gets human peers registered at join time
 
+## AI Agent Communication Rules
+
+- **Allowed phases:** AI agents may only speak during **Lobby**, **Day**, and **Voting** phases
+- **Trigger:** Agents only respond when addressed directly by name (e.g., *"Marcus, what do you think?"*)
+- **Group commands:** If a player addresses all agents (e.g., *"Everyone, tell me what you think"*), each agent must respond in turn with 1–2 short sentences
+
 ## Night Rules
 
 - if the Doctor and Mafia target the same person → the Doctor blocks the kill

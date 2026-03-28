@@ -15,6 +15,7 @@ export class GameManager {
   private bridge: AgentBridge | null = null
   private fishjamRoomId: string | null = null
   private nightTimeout: ReturnType<typeof setTimeout> | null = null
+  private mafiaGraceTimer: ReturnType<typeof setTimeout> | null = null
   private dayTimeout: ReturnType<typeof setTimeout> | null = null
   private votingTimeout: ReturnType<typeof setTimeout> | null = null
   private resolving = false
@@ -423,6 +424,19 @@ export class GameManager {
     if (player.role === 'mafia') {
       this.mafiaVotes.set(playerId, targetId)
       this.log('night', `${player.name} UI → kill → ${target.name}`)
+      // When all human mafia have voted, give 5s grace period for detective/doctor to act
+      const humanMafia = this.state.players.filter((p) => p.role === 'mafia' && p.status === 'alive' && !this.isBot(p.name))
+      if (humanMafia.every((p) => this.mafiaVotes.has(p.id)) && !this.mafiaGraceTimer) {
+        this.log('night', 'All human mafia voted — 5s grace period for detective/doctor')
+        this.mafiaGraceTimer = setTimeout(() => {
+          this.mafiaGraceTimer = null
+          if (this.state.phase === 'night') {
+            this.log('night', 'Grace period expired → resolveNight()')
+            if (this.nightTimeout) { clearTimeout(this.nightTimeout); this.nightTimeout = null }
+            this.resolveNight()
+          }
+        }, 5000)
+      }
     } else if (player.role === 'detective' && this.detectiveTarget === null) {
       this.detectiveTarget = targetId
       this.log('night', `${player.name} UI → investigate → ${target.name}`)
@@ -435,13 +449,18 @@ export class GameManager {
   }
 
   private checkAllNightActionsComplete() {
-    const mafiaAlive = this.state.players.some((p) => p.role === 'mafia' && p.status === 'alive')
+    const mafiaPlayers = this.state.players.filter((p) => p.role === 'mafia' && p.status === 'alive')
     const detectiveAlive = this.state.players.some((p) => p.role === 'detective' && p.status === 'alive')
     const doctorAlive = this.state.players.some((p) => p.role === 'doctor' && p.status === 'alive')
 
-    const mafiaActed = this.mafiaVotes.size > 0 || !mafiaAlive
+    // Only require HUMAN mafia to have voted — bots vote as a bonus if they respond in time
+    const humanMafia = mafiaPlayers.filter((p) => !this.isBot(p.name))
+    const mafiaActed = mafiaPlayers.length === 0
+      || (humanMafia.length === 0 ? this.mafiaVotes.size > 0 : humanMafia.every((p) => this.mafiaVotes.has(p.id)))
     const detectiveActed = this.detectiveTarget !== null || !detectiveAlive
     const doctorActed = this.doctorTarget !== null || !doctorAlive
+
+    this.log('night', `checkAllNightActionsComplete: mafia=${mafiaActed}(${this.mafiaVotes.size}/${mafiaPlayers.length}) detective=${detectiveActed} doctor=${doctorActed}`)
 
     if (mafiaActed && detectiveActed && doctorActed) {
       this.log('night', 'All roles acted → resolveNight()')
@@ -487,6 +506,15 @@ export class GameManager {
         if (voter.id === target.id) break
         this.log('night', `${voter.name} → kill → ${target.name}`)
         this.mafiaVotes.set(voter.id, target.id)
+        // Notify narrator when a bot acts so it can continue narrating
+        if (this.isBot(voter.name)) {
+          const remainingMafia = this.state.players.filter(
+            (p) => p.role === 'mafia' && p.status === 'alive' && !this.mafiaVotes.has(p.id)
+          )
+          if (remainingMafia.length === 0) {
+            this.bridge?.sendSilentContext(`[SYSTEM] All mafia bots have chosen their target. Say "The mafia has chosen." and move to Detective.`)
+          }
+        }
         this.checkAllNightActionsComplete()
         break
       }
@@ -497,6 +525,10 @@ export class GameManager {
         if (!target) break
         this.log('night', `Detective → investigate → ${target.name}`)
         this.detectiveTarget = target.id
+        // Notify narrator when a bot detective acts
+        if (this.isBot(cmd.voter || '')) {
+          this.bridge?.sendSilentContext(`[SYSTEM] Bot Detective has investigated. Say "The Detective has seen enough." and move to Doctor.`)
+        }
         this.checkAllNightActionsComplete()
         break
       }
@@ -507,6 +539,10 @@ export class GameManager {
         if (!target) break
         this.log('night', `Doctor → save → ${target.name}`)
         this.doctorTarget = target.id
+        // Notify narrator when a bot doctor acts
+        if (this.isBot(cmd.voter || '')) {
+          this.bridge?.sendSilentContext(`[SYSTEM] Bot Doctor has acted. All roles have had their turn — call resolve_night now.`)
+        }
         this.checkAllNightActionsComplete()
         break
       }
@@ -571,21 +607,29 @@ export class GameManager {
     this.log('voiceFallback', `Heard player name "${mentioned.name}" in "${text}" (phase: ${this.state.phase}, alive: ${mentioned.status === 'alive'})`)
 
     if (this.state.phase === 'night') {
+      const hasActed = (p: typeof this.state.players[0]) => {
+        if (p.role === 'mafia') return this.mafiaVotes.has(p.id)
+        if (p.role === 'detective') return this.detectiveTarget !== null
+        if (p.role === 'doctor') return this.doctorTarget !== null
+        return true
+      }
       const humanNightActors = this.state.players.filter(
         (p) => p.status === 'alive' && !this.isBot(p.name) &&
           (p.role === 'mafia' || p.role === 'detective' || p.role === 'doctor') &&
-          !this.nightActions.has(p.id)
+          !hasActed(p)
       )
       if (humanNightActors.length > 0) {
         const actor = humanNightActors[0]
         if (this.voiceFallbackTimeout) clearTimeout(this.voiceFallbackTimeout)
         this.voiceFallbackTimeout = setTimeout(() => {
-          if (this.nightActions.has(actor.id)) return
+          if (hasActed(actor)) return
           this.log('voiceFallback', `${actor.name} (${actor.role}) said "${text}" → target: ${mentioned.name}`)
-          this.nightActions.set(actor.id, mentioned.id)
+          if (actor.role === 'mafia') this.mafiaVotes.set(actor.id, mentioned.id)
+          else if (actor.role === 'detective') this.detectiveTarget = mentioned.id
+          else if (actor.role === 'doctor') this.doctorTarget = mentioned.id
           this.broadcastEvent({ type: 'transcript', speaker: 'gemini', text: `Your choice: ${mentioned.name}. Confirmed.` })
           this.bridge?.sendText(`[SYSTEM] ${actor.role} action received: target is ${mentioned.name}. Move to the next role or call resolve_night if all done.`)
-          this.logNightProgress()
+          this.checkAllNightActionsComplete()
         }, 2000)
       }
     }
@@ -747,6 +791,7 @@ export class GameManager {
     this.detectiveTarget = null
     this.doctorTarget = null
     this.nightActions.clear()
+    if (this.mafiaGraceTimer) { clearTimeout(this.mafiaGraceTimer); this.mafiaGraceTimer = null }
     this.log('phase', `→ NIGHT ${this.state.day}`)
     this.state.phase = 'night'
     this.broadcastEvent({ type: 'phase_changed', phase: 'night', state: this.getPublicState() })
@@ -762,17 +807,17 @@ export class GameManager {
 
     this.bridge?.sendText(
       `[SYSTEM] Night ${this.state.day} begins.\n` +
+      `Roles this night:\n` +
       `${roleInfo(mafiaPlayers.map((p) => p.name).join(', '), 'Mafia')}\n` +
       `${roleInfo(detective?.name, 'Detective')}\n` +
       `${roleInfo(doctor?.name, 'Doctor')}\n\n` +
       `INSTRUCTIONS:\n` +
-      `1. Narrate: "The town falls asleep..." (2-3 sentences max)\n` +
-      `2. Say: "Mafia, open your eyes. Choose your victim."\n` +
-      `3. For HUMAN mafia: STOP and WAIT for their voice. When you hear a player name, call night_kill(target=NAME) IMMEDIATELY.\n` +
-      `4. For BOT mafia: call night_kill silently, then say "The mafia has chosen."\n` +
-      `5. Move to detective, then doctor — same pattern.\n` +
-      `6. After all 3 functions called, call resolve_night.\n\n` +
-      `CRITICAL: When human says a name like "Alexa" or "I choose Bruno" — you MUST call the function with that name. Do not just acknowledge verbally.`
+      `1. Narrate the night atmosphere only (2-3 dramatic sentences). Do NOT call out any roles.\n` +
+      `2. Then go silent. The server manages all role actions.\n` +
+      `3. For each HUMAN role: listen — when they say a name, IMMEDIATELY call the matching function (night_kill / investigate / doctor_save).\n` +
+      `4. For each BOT role: do NOT call any functions — you will receive a [SYSTEM] notification when the bot has acted.\n` +
+      `5. When you receive [SYSTEM] that all roles are done → call resolve_night immediately.\n\n` +
+      `CRITICAL: When a human says a name like "I choose Bruno" — call the function right away. Do not just acknowledge verbally.`
     )
 
     // Send direct night instructions to each VoiceAgent based on their role
@@ -790,6 +835,31 @@ export class GameManager {
         agent.sendContext(`[GAME] Night ${this.state.day}: You are the Doctor. Call doctor_save now. Choose from: ${targets}.`)
       }
     })
+
+    // Bot fallback: if a bot detective/doctor doesn't call their function within 12s,
+    // auto-assign a random target so the night doesn't stall waiting for slow Gemini responses
+    setTimeout(() => {
+      if (this.state.phase !== 'night') return
+      const alivePlayers = this.state.players.filter((p) => p.status === 'alive')
+      const botDetective = this.state.players.find((p) => p.role === 'detective' && p.status === 'alive' && this.isBot(p.name))
+      if (botDetective && this.detectiveTarget === null) {
+        const randomTarget = alivePlayers.find((p) => p.id !== botDetective.id)
+        if (randomTarget) {
+          this.log('night', `Bot detective fallback — auto-assigning target: ${randomTarget.name}`)
+          this.detectiveTarget = randomTarget.id
+          this.checkAllNightActionsComplete()
+        }
+      }
+      const botDoctor = this.state.players.find((p) => p.role === 'doctor' && p.status === 'alive' && this.isBot(p.name))
+      if (botDoctor && this.doctorTarget === null) {
+        const randomTarget = alivePlayers.find((p) => p.id !== botDoctor.id)
+        if (randomTarget) {
+          this.log('night', `Bot doctor fallback — auto-assigning target: ${randomTarget.name}`)
+          this.doctorTarget = randomTarget.id
+          this.checkAllNightActionsComplete()
+        }
+      }
+    }, 12_000)
 
     // When narrator finishes → start night timer (so client and server timers are in sync)
     this.pendingPhaseTransition = () => {
@@ -816,6 +886,7 @@ export class GameManager {
     if (this.resolving) return
     this.resolving = true
     if (this.nightTimeout) { clearTimeout(this.nightTimeout); this.nightTimeout = null }
+    if (this.mafiaGraceTimer) { clearTimeout(this.mafiaGraceTimer); this.mafiaGraceTimer = null }
 
     // 1. Determine mafia kill target (majority vote, random on tie)
     const voteCounts = new Map<string, number>()
@@ -992,9 +1063,9 @@ export class GameManager {
         }), GAME_CONSTANTS.ROLE_REVEAL_DELAY)
       }
 
-      // Safety fallback
+      // Safety fallback — only fire if startNight hasn't run yet (phase still !== 'night')
       setTimeout(() => {
-        if (this.pendingPhaseTransition && this.state.phase !== 'game_over') {
+        if (this.pendingPhaseTransition && this.state.phase !== 'game_over' && this.state.phase !== 'night') {
           this.pendingPhaseTransition = null
           this.startNight()
         }

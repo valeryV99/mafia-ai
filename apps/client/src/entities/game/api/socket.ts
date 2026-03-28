@@ -86,7 +86,8 @@ export function useGameSocket() {
             if (msg.phase === 'voting') {
               clearVotes()
             }
-            useGameStore.getState().setInvestigationResult(null)
+            // Clear investigation result only when a new night starts (not on day/voting transitions)
+            if (msg.phase === 'night') useGameStore.getState().setInvestigationResult(null)
             console.log(`%c[Phase] → ${msg.phase} at ${Date.now()}`, 'color: #34d399; font-weight: bold')
 
             // Cancel previous safety timer (from earlier phase)
@@ -111,8 +112,18 @@ export function useGameSocket() {
             }
             break
           }
-          case 'player_eliminated':
+          case 'player_eliminated': {
+            const { gameState, setGameState } = useGameStore.getState()
+            if (gameState) {
+              setGameState({
+                ...gameState,
+                players: gameState.players.map((p) =>
+                  p.id === msg.playerId ? { ...p, status: 'dead' as const } : p
+                ),
+              })
+            }
             break
+          }
           case 'vote_cast': {
             addVote(msg.fromId, msg.targetId)
             const gameState = useGameStore.getState().gameState

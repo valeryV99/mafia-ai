@@ -25,6 +25,7 @@ export function RoomPage() {
   const navigate = useNavigate()
   const { playerId, playerName, myRole, gameState, fishjamToken, lastTranscript } = useGameStore()
   const isNarratorSpeaking = useGameStore((s) => s.isNarratorSpeaking)
+  const investigationResult = useGameStore((s) => s.investigationResult)
   const { send, wsRef, setOnBinary } = useGameSocket()
   const { playAudio } = useAudioPipeline(wsRef)
   const { metrics: faceMetrics, setVideoElement, startAnalysis, stopAnalysis, onMetrics } = useFaceAnalysis()
@@ -75,32 +76,28 @@ export function RoomPage() {
     }
   }, [roomId, playerName, playerId, send])
 
-  // Join Fishjam room when token is received
+  // Join Fishjam room when token is received — only re-run when token changes
   useEffect(() => {
-    if (fishjamToken && peerStatus === 'idle' && !fishjamJoinInitiated.current) {
-      fishjamJoinInitiated.current = true
+    if (!fishjamToken || fishjamJoinInitiated.current) return
+    fishjamJoinInitiated.current = true
 
-      initializeDevices({})
-        .then(() =>
-          joinRoom({
-            peerToken: fishjamToken,
-            peerMetadata: { name: playerName },
-          })
-        )
-        .then(() => {
-          startCamera()
-          startMicrophone() // Audio goes through Fishjam SFU → Agent → Gemini
+    initializeDevices({})
+      .then(() =>
+        joinRoom({
+          peerToken: fishjamToken,
+          peerMetadata: { name: playerName },
         })
-        .catch((err) => {
-          console.error('Fishjam setup failed:', err)
-          fishjamJoinInitiated.current = false
-        })
-    }
-
-    return () => {
-      console.log('Fishjam effect cleanup')
-    }
-  }, [fishjamToken, peerStatus, playerName, joinRoom, initializeDevices, startCamera, startMicrophone])
+      )
+      .then(() => {
+        startCamera()
+        startMicrophone()
+      })
+      .catch((err) => {
+        console.error('Fishjam setup failed:', err)
+        fishjamJoinInitiated.current = false
+      })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fishjamToken])
 
   // Audio now goes through Fishjam Agent — no manual mic/playback needed
 
@@ -264,9 +261,22 @@ export function RoomPage() {
           <AiAnalysis />
         )}
 
-        {/* Night panel */}
-        {isNight && isAlive && (
+        {/* Night panel — shown only after narrator finishes speaking */}
+        {isNight && isAlive && !isNarratorSpeaking && (
           <NightPanel />
+        )}
+
+        {/* Detective investigation result */}
+        {myRole === 'detective' && investigationResult && (
+          <div className="mb-5 p-4 bg-[#1a1a2e] rounded-xl border-2 border-purple-700 text-center">
+            <p className="text-purple-300 text-xs font-bold uppercase tracking-wider mb-1">Investigation Result</p>
+            <p className="text-white text-sm">
+              <span className="font-bold">{investigationResult.targetName}</span> is{' '}
+              <span className={`font-bold ${investigationResult.targetRole === 'mafia' ? 'text-red-400' : 'text-green-400'}`}>
+                {investigationResult.targetRole}
+              </span>
+            </p>
+          </div>
         )}
 
         {/* Lobby: add bots + start */}
