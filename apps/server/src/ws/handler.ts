@@ -233,7 +233,7 @@ export function handlePlayerAudio(playerId: string, audio: Buffer) {
   if (audioLogCounter++ % 50 === 0) {
     console.log(`[Audio] Forwarding ${audio.length} bytes from ${playerId} to Gemini`)
   }
-  game.sendPlayerAudio(audio)
+  game.sendPlayerAudio(playerId, audio)
 }
 
 export function getActiveRooms() {

@@ -1042,7 +1042,10 @@ export class GameManager {
   private closeNightActionWindow(playerId: string, targetName?: string) {
     if (!this.nightActionWindowPlayers.has(playerId)) return
     this.nightActionWindowPlayers.delete(playerId)
-    this.sendToPlayer(playerId, { type: 'night_action_received', targetName })
+    this.sendToPlayer(playerId, { type: 'night_action_received' } as any)
+    if (targetName) {
+      this.broadcastEvent({ type: 'transcript', speaker: 'gemini', text: `Target: ${targetName}. Confirmed.` })
+    }
   }
 
   private resolveNight() {
@@ -1341,8 +1344,39 @@ export class GameManager {
   }
 
   private playerAudioChunks = 0
-  sendPlayerAudio(chunk: Buffer) {
+  private currentAudioSpeakerId: string | null = null
+  private speakerSilenceTimer: ReturnType<typeof setTimeout> | null = null
+
+  private hasVoice(pcm16: Buffer): boolean {
+    if (pcm16.length < 2) return false
+    const int16 = new Int16Array(pcm16.buffer, pcm16.byteOffset, Math.floor(pcm16.length / 2))
+    let energy = 0
+    for (let i = 0; i < int16.length; i++) energy += Math.abs(int16[i])
+    return (energy / int16.length) > 80
+  }
+
+  sendPlayerAudio(playerId: string, chunk: Buffer) {
     this.playerAudioChunks++
+
+    // Only track speaker when actual voice detected (not silence/noise)
+    if (this.hasVoice(chunk) && playerId !== this.currentAudioSpeakerId) {
+      const player = this.state.players.find((p) => p.id === playerId)
+      if (player) {
+        this.currentAudioSpeakerId = playerId
+        this.bridge?.sendText(`[SPEAKER] ${player.name} is now speaking.`)
+        this.broadcastEvent({ type: 'speaker_changed', speakerId: playerId })
+      }
+    }
+
+    // Reset after 2s silence from current speaker
+    if (this.hasVoice(chunk) && playerId === this.currentAudioSpeakerId) {
+      if (this.speakerSilenceTimer) clearTimeout(this.speakerSilenceTimer)
+      this.speakerSilenceTimer = setTimeout(() => {
+        this.currentAudioSpeakerId = null
+        this.broadcastEvent({ type: 'speaker_changed', speakerId: null })
+      }, 2000)
+    }
+
     if (!this.bridge) {
       if (this.playerAudioChunks % 200 === 0)
         this.log('playerAudio', `DROP: bridge=null (chunks received: ${this.playerAudioChunks})`)
@@ -1352,7 +1386,7 @@ export class GameManager {
       this.log('playerAudio', `First audio chunk from player: ${chunk.length}b — forwarding to Gemini`)
     }
     if (this.playerAudioChunks % 500 === 0) {
-      this.log('playerAudio', `chunks=${this.playerAudioChunks}, bridge.narratorSpeaking=${this.bridge.isNarratorSpeaking()}, phase=${this.state.phase}`)
+      this.log('playerAudio', `chunks=${this.playerAudioChunks}, phase=${this.state.phase}`)
     }
     this.bridge.sendPlayerAudioDirect(chunk)
   }
