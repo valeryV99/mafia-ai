@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import { handleClientEvent, handleDisconnect, handlePlayerAudio, setFishjamService, getOrCreateGame } from './ws/handler'
+import { handleClientEvent, handleDisconnect, handlePlayerAudio, setFishjamService, getOrCreateGame, getActiveRooms } from './ws/handler'
 import { GeminiSession } from './gemini/GeminiSession'
 import { buildGameMasterPrompt } from './gemini/prompts'
 import { FishjamService } from './fishjam/FishjamService'
@@ -21,6 +21,8 @@ try {
 }
 
 app.get('/health', (c) => c.json({ status: 'ok' }))
+
+app.get('/active-rooms', (c) => c.json(getActiveRooms()))
 
 // Fishjam routes
 app.post('/rooms', async (c) => {

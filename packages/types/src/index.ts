@@ -57,6 +57,13 @@ export type ServerEvent =
   | { type: 'agent_selection_changed'; selectedAgentIds: string[] }
   | { type: 'error'; message: string }
 
+// Room listing
+export interface RoomInfo {
+  roomId: string
+  playerCount: number
+  phase: Phase
+}
+
 // WebSocket Events — Client → Server
 export type ClientEvent =
   | { type: 'join_room'; roomId: string; playerName: string }

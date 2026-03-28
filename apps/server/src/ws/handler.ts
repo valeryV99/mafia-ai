@@ -227,6 +227,16 @@ export function handlePlayerAudio(playerId: string, audio: Buffer) {
   game.sendPlayerAudio(audio)
 }
 
+export function getActiveRooms() {
+  return [...games.values()]
+    .filter((game) => game.players.some((p) => p.isConnected && !p.name.startsWith('📺')))
+    .map((game) => ({
+      roomId: game.roomId,
+      playerCount: game.players.filter((p) => p.isConnected && !p.name.startsWith('📺')).length,
+      phase: game.phase,
+    }))
+}
+
 function findGameByPlayer(playerId: string): GameManager | undefined {
   for (const game of games.values()) {
     if (game.players.some((p) => p.id === playerId)) {

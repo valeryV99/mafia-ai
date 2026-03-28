@@ -1,14 +1,19 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Button } from '@/shared/ui'
 import { Input } from '@/shared/ui'
 
 interface JoinFormProps {
   onJoin: (name: string, roomId: string) => void
+  prefillRoomId?: string
 }
 
-export function JoinForm({ onJoin }: JoinFormProps) {
+export function JoinForm({ onJoin, prefillRoomId }: JoinFormProps) {
   const [name, setName] = useState('')
   const [roomId, setRoomId] = useState('')
+
+  useEffect(() => {
+    if (prefillRoomId !== undefined) setRoomId(prefillRoomId)
+  }, [prefillRoomId])
 
   const handleSubmit = () => {
     if (!name.trim()) return
@@ -36,7 +41,7 @@ export function JoinForm({ onJoin }: JoinFormProps) {
         onClick={handleSubmit}
         disabled={!name.trim()}
       >
-        Join Game
+        {roomId.trim() ? 'Join Room' : 'Create Room'}
       </Button>
     </div>
   )
