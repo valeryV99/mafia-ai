@@ -20,6 +20,7 @@ export class AgentBridge {
   private geminiSession: Session | null = null
   private callbacks: AgentBridgeCallbacks = {}
   private muteOutput = false
+  private name: string
 
   // VAD floor control
   private activeSpeakerId: string | null = null
@@ -29,11 +30,13 @@ export class AgentBridge {
   // Audio filter — only forward audio from known human peers
   private allowedPeerIds: Set<string> | null = null
   private narratorSpeaking = false
+  private seenPeerIds: Set<string> = new Set()
 
-  constructor(fishjamId: string, managementToken: string, geminiApiKey: string) {
+  constructor(fishjamId: string, managementToken: string, geminiApiKey: string, name: string = 'Bridge') {
+    this.name = name
     this.fishjamClient = new FishjamClient({ fishjamId, managementToken })
     this.genAi = GeminiIntegration.createClient({ apiKey: geminiApiKey })
-    log('init', 'AgentBridge created')
+    log('init', `[${this.name}] AgentBridge created`)
   }
 
   async start(roomId: string, systemPrompt: string, tools?: object[], voiceName: string = 'Orus', muteOutput: boolean = false): Promise<void> {
@@ -68,9 +71,9 @@ export class AgentBridge {
         outputAudioTranscription: {},
       },
       callbacks: {
-        onopen: () => log('gemini', 'Session opened'),
-        onclose: (e: any) => log('gemini', `Session closed: ${e?.code || 'unknown'}`),
-        onerror: (e: any) => log('gemini', 'Error:', e),
+        onopen: () => log('gemini', `[${this.name}] Session opened`),
+        onclose: (e: any) => log('gemini', `[${this.name}] Session closed: ${e?.code || 'unknown'}`),
+        onerror: (e: any) => log('gemini', `[${this.name}] Error:`, e),
         onmessage: (msg: any) => this.handleGeminiMessage(msg),
       },
     })
@@ -79,6 +82,13 @@ export class AgentBridge {
 
     agent.on('trackData', (event: any) => {
       const { peerId, data } = event
+
+      // Log each new peerId seen (once per peer)
+      if (!this.seenPeerIds.has(peerId)) {
+        this.seenPeerIds.add(peerId)
+        const allowed = this.allowedPeerIds === null ? 'YES(no filter)' : this.allowedPeerIds.has(peerId) ? 'YES' : 'NO'
+        log('audio', `[${this.name}] New peer ${peerId.slice(0, 8)} → allowed: ${allowed}`)
+      }
 
       // Only forward audio from allowed (human) peers
       if (this.allowedPeerIds !== null && !this.allowedPeerIds.has(peerId)) return
@@ -137,6 +147,7 @@ export class AgentBridge {
     }
 
     if (msg.serverContent?.interrupted) {
+      log('gemini', `[${this.name}] INTERRUPTED`)
       if (this.agent && this.agentTrackId) {
         this.agent.interruptTrack(this.agentTrackId as any)
       }

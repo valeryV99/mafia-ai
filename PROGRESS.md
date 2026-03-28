@@ -1,150 +1,94 @@
 # Mafia AI — Progress & Known Issues
 
-_Last updated: 2026-03-22_
+_Last updated: 2026-03-23_
 
 ---
 
-## What works ✓
+## Implemented ✓
 
-- Core game loop: lobby → night → (day) → voting → night...
-- Role assignment and role reveal to player
-- Fishjam WebRTC — player audio/video, speaking border highlight, VAD floor control
-- Narrator speaks during night announcement (full scene: mafia/detective/doctor wake-up)
-- Narrator transcription in subtitle box (cleared after `turnComplete`)
-- Player mic blocked while narrator speaks (server-side audio drop + UI freeze)
-- Countdown timer frozen when `isNarratorSpeaking = true`
-- Detective investigation result visible in NightPanel UI
-- Bot subtitles in transcript bar (`bot_speak`)
-- Transcript noise filtering (backtick function calls, `<ctrl46>` filtered client-side)
-- `afterNarratorFinishes()` — phase transitions wait for `turnComplete` (with 15s fallback)
-- `turnComplete` IS firing — confirmed in logs (just with delay after 15s fallback triggers first)
-- Timing logs: `[Phase]`, `[Timer]`, `[Narrator]`, `[STT]`
-- AI voice agent (`VoiceAgent`) added to Fishjam room
-- `[AgentBridge:raw]` diagnostic logging of Gemini message structure
-- Batch `sendToolResponse` (all FCs in one message — correct per Gemini API)
+### Step 1 — Lobby
+- Players join room, host starts game ✅
+- `+ Add Voice Agent` (Alex) joins as Fishjam audio participant ✅
+- `+ Add 3 AI Bots` button **removed** — bots replaced by AI Voice Agents ✅
+- `BotAgent.ts` deleted, all bot artifacts cleaned up (BotAgent, botNames, botAgents, useBotTTS, pendingBotSpeech, bot_speech, tts.ts) ✅
+- `StartButton` requires min. 4 players (client + server) ✅
+- Role count formula: `Math.floor(n/4)` mafia, 1 detective, 1 doctor, rest civilian ✅
 
----
+### Step 2 — Role Assignment (`role_assignment`)
+- Roles assigned randomly, sent privately to each player ✅
+- `ROLE_REVEAL_DELAY` (3s dev / 5s prod) before narrator starts ✅
+- No timer shown during `role_assignment` ✅
+- Narrator silent ✅
+- **Auto-mute mic** on `role_assignment` entry, auto-unmute on exit ✅
+- Role summary log: `[Game:X][roles] Alice=mafia, Bob=detective, ...` ✅
 
-## Known bugs 🐛
+### Step 3 — Narrator speaks (transition → Night)
+- `phase_changed` to `night` → `isNarratorSpeaking = true` → timer FROZEN ✅
+- Narrator announces night, describes town falling asleep ✅
+- `transcript_clear` (turnComplete) → `isNarratorSpeaking = false` → timer STARTS ✅
+- Safety fallback: timer unfreezes after 30s if turnComplete never fires ✅
 
-### CRITICAL: `bridge.start()` called twice in `initGemini()`
+### Step 4 — Night (`night`)
+- Timer starts AFTER narrator finishes (fixed: was firing immediately) ✅
+- `NightPanel` UI: mafia/detective/doctor see player list, civilian sees "wait" message ✅
+- Players cannot target themselves ✅
+- After selecting target: "Action submitted — waiting for dawn..." confirmation ✅
+- Night actions via voice (Gemini tool calls: `night_kill`, `investigate`, `doctor_save`, `resolve_night`) ✅
+- Night actions via UI (`night_action` WS event → `handleNightAction()`) ✅
+- `checkAllNightActionsComplete()` — resolves night early if all roles acted ✅
+- Timer fallback: `resolveNight()` fires after 45s/90s if not all roles acted ✅
 
-**Location:** `apps/server/src/game/GameManager.ts` lines ~369–374
+### Step 5 — Night resolution + Narrator speaks (transition → Day or Game Over)
+- `resolveNight()` fully implemented:
+  - Mafia kill: majority vote, random on tie ✅
+  - Doctor blocks kill if same target ✅
+  - Detective gets investigation result (even if target killed this turn) ✅
+  - Win condition checked after night ✅
+- `startDay()` now has `doctorSaved` param → narrator knows to mention the save ✅
+- If mafia wins after night → `endGame()` → narrator announces, goes to `game_over` ✅
 
-```ts
-await this.bridge.start(this.fishjamRoomId, prompt, tools)           // ← 3-arg (silent)
-setTimeout(() => this.startNight(), GAME_CONSTANTS.ROLE_REVEAL_DELAY) // ← fires too early
-await this.bridge.start(this.fishjamRoomId, prompt, tools, 'Orus', false) // ← 5-arg (audible), DUPLICATE!
-```
-
-This creates **two Fishjam ghost peers** and **two Gemini sessions**. The second call replaces `geminiSession` and creates a second agent track. This is the root cause of multiple issues (narrator silence, double audio, confusion).
-
-**Fix:** Keep only the 5-arg call. Remove the duplicate 3-arg call and move `setTimeout(startNight)` to after the single `bridge.start()`.
-
----
-
-### CRITICAL: `turnComplete` fires AFTER 15s fallback — race condition
-
-**Symptoms (confirmed in logs):**
-```
-[Timer] Safety reset — narrator never fired turnComplete  ← 15s fallback fires
-[Phase] → day at T+29s                                   ← phase already changed
-[Narrator] DONE (turnComplete) at T+34s                  ← real turnComplete, 5s late
-```
-
-The 15s fallback in `afterNarratorFinishes()` triggers `pendingPhaseTransition` before the real `turnComplete` arrives. The real `turnComplete` then fires `onTurnComplete` → sends stray `transcript_clear` at the wrong time.
-
-**Root cause:** `PENDING_PHASE_TIMEOUT_MS = 15_000` is too short for a full night narration (~25–35s). Also: after `sendToolResponse`, Gemini needs extra time to finish speaking.
-
-**Fix options:**
-- Increase `PENDING_PHASE_TIMEOUT_MS` to 45–60s
-- OR: drive phase transitions purely from timer (not narrator) — narrator speaks over the running timer
+### Steps 6–10 (Day, Voting, Game Over)
+- Day discussion, voting, game over phases were already working from before ✅
+- Post-voting elimination and win condition check working ✅
 
 ---
 
-### BUG: Safety reset timer stacks across phases
+## ⚠️ NOT YET TESTED
 
-**Symptoms (confirmed in logs):**
-```
-[Phase] → lobby at T+0     → sets 20s timer
-[Phase] → night at T+5     → sets another 20s timer (old one still running)
-[Timer] Safety reset ← lobby's timer fires at T+20, resetting narrator during night!
-```
+All changes from this session are written but **not verified in a real running game**. The following need to be tested:
 
-**Fix:** Store timer ref, cancel previous timer before setting new one.
-
----
-
-### BUG: Day phase narrator sends only `<ctrl46>` (silent turns)
-
-**Symptoms:** After phase_changed → day, narrator sends multiple transcript events containing only `<ctrl46>`. These are silent Gemini turns from batch tool responses (bot_speak, cast_vote). Client filters them → shows nothing → narrator appears silent during day.
-
-**These are NOT real speech** — just tool call artifact. The actual day announcement arrives later ("A new dawn breaks...").
-
-**Fix options:**
-- Don't set `isNarratorSpeaking = true` until non-empty text arrives (already partially done client-side)
-- Or: accept it as cosmetic issue since content is correctly filtered
+- Auto-mute/unmute mic on `role_assignment` ↔ other phases
+- Night timer starts only AFTER narrator finishes (not immediately)
+- NightPanel shows correct UI per role
+- Mafia kill → correct player eliminated next day
+- Doctor save → narrator mentions the save
+- Detective investigation result appears in client UI
+- `checkAllNightActionsComplete()` triggers early resolution correctly
+- Night fallback timer (45s) fires if nobody acts
+- Win condition after night (mafia ≥ civilians → game_over, no day phase)
+- No regressions in day / voting / game_over flow
 
 ---
 
-### BUG: `initGemini()` has two `bridge.start()` calls (see CRITICAL above)
+## Known issues still open 🐛
 
-Also: after the first `bridge.start()` (3-arg), `startNight()` is scheduled with `setTimeout`. This means night starts before the audible bridge (2nd call) is ready. So the narrator can't speak for the first night call.
-
----
-
-## Desired game flow (rewrite plan) 🎯
-
-```
-LOBBY
-  → game_started (roles assigned)
-  → PREPARATION PHASE (new)
-      - narrator announces: "Welcome to Mafia! Here are the roles..."
-      - timer FROZEN (no countdown)
-      - when narrator finishes (turnComplete) → start night
-NIGHT (timer runs, e.g. 30s)
-  - civilians: see panel "Wait for night to end"
-  - mafia/detective/doctor: see action panel, make choice
-  - when timer expires → freeze timer → narrator announces night results
-      - if someone killed: show their tile with gray overlay ("X was killed")
-      - narrator speaks (timer frozen)
-      - when turnComplete → start VOTING
-VOTING (timer runs, e.g. 30s)
-  - all players vote (voice or click)
-  - when all vote OR timer expires → freeze timer → narrator announces result
-      - show eliminated player with gray tile
-      - narrator announces next night
-      - when turnComplete → start next NIGHT
-...repeat until game over
-```
-
-**Key simplifications vs current:**
-- Remove `day` phase (discussion) — go directly night → voting
-- Add `preparation` phase
-- No day discussion timer — narrator drives timing directly
+- **Safety timer stacking** — `narratorSafetyTimer` in `socket.ts` may stack across phase changes if not cancelled properly. Check whether existing cancellation logic is sufficient.
+- **`<ctrl46>` artifacts** — Gemini tool call batches produce silent transcript events during day. Filtered client-side but cosmetically noisy.
+- **VoiceAgent night tools** — VoiceAgent (Alex) only has `cast_vote` tool. If Alex is mafia/detective/doctor, he can't call `night_kill`/`investigate`/`doctor_save`. Night tool support for VoiceAgent not yet added.
 
 ---
 
-## Todo 📋
+## Remaining game steps to implement 📋
 
-| # | Priority | Description | File(s) |
-|---|----------|-------------|---------|
-| 1 | ✅ DONE | Fix double `bridge.start()` — remove 3-arg call, keep only 5-arg | `GameManager.ts` |
-| 2 | ✅ DONE | Increase `PENDING_PHASE_TIMEOUT_MS` to 60s (fix race with 15s fallback) | `AgentBridge.ts` |
-| 0 | ✅ DONE | Fix audio loop: AgentBridge forwarded VoiceAgent audio back to Gemini → 1008 Policy Violation. Fix: whitelist only human peer IDs in `allowedPeerIds` | `AgentBridge.ts`, `GameManager.ts` |
-| 3 | 🟠 HIGH | Add `preparation` phase to Phase type + implement `startPreparation()` | `types/index.ts`, `GameManager.ts` |
-| 4 | 🟠 HIGH | Remove `day` discussion phase — wire night → voting directly (via narrator) | `GameManager.ts` |
-| 5 | 🟠 HIGH | Show killed player with gray tile overlay on `player_eliminated` event | `VideoGrid.tsx` |
-| 6 | 🟡 IMPORTANT | Fix safety timer stacking — store ref, cancel previous on phase_changed | `socket.ts` |
-| 7 | 🟡 IMPORTANT | Only set `isNarratorSpeaking(true)` for phases with narrator (not lobby) | `socket.ts` |
-| 8 | 🟢 FEATURE | Bots: show 3–4 word suspicion text in transcript bar (`suspicion_update` event) | `socket.ts`, `VideoGrid.tsx` |
+| Step | Phase | Status |
+|------|-------|--------|
+| 6 | Day (`day`) | ✅ implemented (needs regression test) |
+| 7 | Narrator speaks (transition → Voting) | ✅ implemented (needs regression test) |
+| 8 | Voting (`voting`) | ✅ implemented (needs regression test) |
+| 9 | Elimination resolution + Narrator (→ Night or Game Over) | ✅ implemented (needs regression test) |
+| 10 | Game Over (`game_over`) | ✅ implemented (needs regression test) |
 
----
-
-## What to implement FIRST
-
-Start with todos #1 and #2 — these unblock everything else:
-1. Fix double bridge.start → narrator will work reliably
-2. Increase timeout → turnComplete will drive real transitions instead of 15s fallback
-
-Then #3 + #4 (new game flow), then #5 (gray tile), then #6–8.
+### Features still missing (from CONVENTIONS.md Known Limitations)
+- Gray tile / visual indicator for eliminated players (`VideoGrid.tsx`)
+- Eliminated players cannot vote or act (needs guard in `castVote` / `handleNightAction`)
+- 4 players minimum guard on `StartButton` is client-only — server already enforces it

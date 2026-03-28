@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useConnection, usePeers, useCamera, useMicrophone, useInitializeDevices } from '@fishjam-cloud/react-client'
-import { useGameStore, useGameSocket, useFaceAnalysis, useBotTTS } from '@/entities/game'
+import { useGameStore, useGameSocket, useFaceAnalysis } from '@/entities/game'
 import { RoleCard } from '@/entities/player'
 import { PhaseOverlay } from '@/widgets/phase-overlay'
 import { VideoGrid } from '@/widgets/video-grid'
@@ -15,9 +15,9 @@ import { StartButton } from '@/features/start-game'
 import type { Phase } from '@mafia-ai/types'
 
 const PHASE_DURATIONS: Partial<Record<Phase, number>> = {
-  night: 30,
-  day: 45,
-  voting: 20,
+  night: 45,
+  day: 80,
+  voting: 40,
 }
 
 export function RoomPage() {
@@ -27,8 +27,6 @@ export function RoomPage() {
   const isNarratorSpeaking = useGameStore((s) => s.isNarratorSpeaking)
   const { send } = useGameSocket()
   const { metrics: faceMetrics, setVideoElement, startAnalysis, stopAnalysis, onMetrics } = useFaceAnalysis()
-  const { speak: botSpeak } = useBotTTS()
-  const pendingBotSpeech = useGameStore((s) => s.pendingBotSpeech)
 
   // Fishjam hooks
   const { joinRoom, peerStatus } = useConnection()
@@ -38,6 +36,24 @@ export function RoomPage() {
   const { initializeDevices } = useInitializeDevices()
 
   const fishjamJoinInitiated = useRef(false)
+  const autoMutedRef = useRef(false)
+
+  // Auto-mute mic during phases where players cannot talk to each other
+  useEffect(() => {
+    const phase = gameState?.phase
+    if (!phase) return
+    if (phase === 'role_assignment') {
+      if (!isMicrophoneMuted) {
+        toggleMicrophoneMute()
+        autoMutedRef.current = true
+      }
+    } else {
+      if (autoMutedRef.current && isMicrophoneMuted) {
+        toggleMicrophoneMute()
+        autoMutedRef.current = false
+      }
+    }
+  }, [gameState?.phase, isMicrophoneMuted, toggleMicrophoneMute])
 
   // Redirect to lobby if no playerName (direct URL navigation)
   useEffect(() => {
@@ -117,14 +133,6 @@ export function RoomPage() {
       })
     })
   }, [onMetrics, send])
-
-  // Play bot speech via browser TTS
-  useEffect(() => {
-    if (pendingBotSpeech) {
-      botSpeak(pendingBotSpeech.playerName, pendingBotSpeech.message)
-      useGameStore.getState().setPendingBotSpeech(null)
-    }
-  }, [pendingBotSpeech, botSpeak])
 
   if (!playerName) {
     return null
@@ -263,23 +271,9 @@ export function RoomPage() {
             >
               + Add Voice Agent
             </button>
-            <button
-              onClick={async () => {
-                const res = await fetch(`http://localhost:3001/rooms/${roomId}/bots`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ count: 3 }),
-                })
-                const data = await res.json()
-                console.log('Bots added:', data)
-              }}
-              className="px-6 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold transition-colors"
-            >
-              + Add 3 AI Bots
-            </button>
             <StartButton
               playerCount={gameState.players.length}
-              minPlayers={1}
+              minPlayers={4}
               onStart={() => send({ type: 'start_game' })}
             />
           </div>

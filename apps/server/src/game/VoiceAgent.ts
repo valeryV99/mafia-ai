@@ -12,11 +12,19 @@ export class VoiceAgent {
         private fjId: string,
         private fjToken: string
     ) {
-        this.bridge = new AgentBridge(fjId, fjToken, apiKey)
+        this.bridge = new AgentBridge(fjId, fjToken, apiKey, `VoiceAgent:${name}`)
     }
 
-    async join(roomId: string, role: string, tools: any[], onAction: (name: string, args: any) => void) {
+    allowPeer(peerId: string) {
+        this.bridge.allowPeer(peerId)
+    }
+
+    async join(roomId: string, role: string, tools: any[], allowedPeerIds: string[], onAction: (name: string, args: any) => void) {
         if (this.isConnected) return
+
+        for (const peerId of allowedPeerIds) {
+            this.bridge.allowPeer(peerId)
+        }
 
         const prompt = `
       You are a human player named ${this.name}.

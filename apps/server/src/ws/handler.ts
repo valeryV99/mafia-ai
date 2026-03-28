@@ -106,7 +106,8 @@ export async function handleClientEvent(
     }
 
     case 'night_action': {
-      // Night actions disabled — all roles equal for now
+      const game = findGameByPlayer(ws.data.playerId)
+      if (game) game.handleNightAction(ws.data.playerId, event.targetId)
       break
     }
 

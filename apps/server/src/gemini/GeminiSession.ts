@@ -81,18 +81,6 @@ const GAME_TOOLS = [
       required: ['player', 'note']
     }
   },
-  {
-    name: 'bot_speak',
-    description: 'Make an AI bot player say something out loud during day discussion. Use this instead of narrating bot dialogue yourself. Each bot has a unique voice on the client.',
-    parameters: {
-      type: 'OBJECT',
-      properties: {
-        player: { type: 'STRING', description: 'Name of the bot player who should speak' },
-        message: { type: 'STRING', description: 'What the bot says (1-3 sentences, in character)' }
-      },
-      required: ['player', 'message']
-    }
-  }
 ]
 
 export class GeminiSession {

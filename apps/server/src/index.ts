@@ -20,8 +20,6 @@ try {
   console.warn('Fishjam not configured:', (err as Error).message)
 }
 
-const BOT_NAMES = ['Alexa', 'Bruno', 'Clara', 'Dante', 'Elena', 'Felix', 'Gloria', 'Hugo']
-
 app.get('/health', (c) => c.json({ status: 'ok' }))
 
 // Fishjam routes
@@ -37,34 +35,6 @@ app.post('/rooms/:roomId/peers', async (c) => {
   const body = await c.req.json<{ playerName?: string }>()
   const { token, peerId } = await fishjam.addPeer(roomId, { name: body.playerName })
   return c.json({ token, peerId })
-})
-
-// Add AI bots to a game room
-app.post('/rooms/:roomId/bots', async (c) => {
-  const { roomId } = c.req.param()
-  const body = await c.req.json<{ count?: number }>().catch(() => ({ count: 3 }))
-  const count = Math.min(body.count ?? 3, 7)
-
-  const game = getOrCreateGame(roomId)
-  const usedNames = new Set(game.players.map((p) => p.name))
-  const added: string[] = []
-
-  for (const name of BOT_NAMES) {
-    if (added.length >= count) break
-    if (usedNames.has(name)) continue
-    game.addBot(name)
-    added.push(name)
-  }
-
-  // Broadcast updated state to all clients
-  game.broadcastEvent({
-    type: 'phase_changed',
-    phase: game.phase,
-    state: game.getPublicState(),
-  })
-
-  console.log(`[API] Added ${added.length} bots to room ${roomId}: ${added.join(', ')}`)
-  return c.json({ added, total: game.players.length })
 })
 
 app.get('/test-gemini', async (c) => {
@@ -84,7 +54,6 @@ app.get('/test-gemini', async (c) => {
         mafiaNames: ['Bob'],
         detectiveName: 'Charlie',
         doctorName: 'Dave',
-        botNames: [],
       })
     )
     session.sendText('Welcome players to the game dramatically. Introduce yourself as the Game Master.')

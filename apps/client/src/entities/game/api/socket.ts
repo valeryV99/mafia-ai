@@ -18,6 +18,7 @@ export function useGameSocket() {
   const onBinaryRef = useRef<((data: ArrayBuffer) => void) | null>(null)
   const playerClearTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const narratorSafetyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const narratorFreezeTime = useRef<number | null>(null)
 
   useEffect(() => {
     intentionalClose.current = false
@@ -96,8 +97,9 @@ export function useGameSocket() {
             // Only freeze timer for phases that have a narrator announcement
             const phasesWithNarrator = ['night', 'day', 'voting', 'game_over']
             if (phasesWithNarrator.includes(msg.phase)) {
+              narratorFreezeTime.current = Date.now()
               useGameStore.getState().setNarratorSpeaking(true)
-              console.log(`%c[Timer] FROZEN → ${msg.phase} at ${Date.now()}`, 'color: #818cf8; font-weight: bold')
+              console.log(`%c[Timer] FROZEN → ${msg.phase} at t=0`, 'color: #818cf8; font-weight: bold')
               // Safety: unfreeze if narrator never fires turnComplete within 30s
               narratorSafetyTimer.current = setTimeout(() => {
                 if (useGameStore.getState().isNarratorSpeaking) {
@@ -170,8 +172,10 @@ export function useGameSocket() {
             const { clearTranscript, setNarratorSpeaking } = useGameStore.getState()
             clearTranscript()
             setNarratorSpeaking(false)
-            console.log(`%c[Narrator] DONE (turnComplete) at ${Date.now()}`, 'color: #f59e0b; font-weight: bold')
-            console.log(`%c[Timer] RESUMED after narrator at ${Date.now()}`, 'color: #34d399; font-weight: bold')
+            const frozenFor = narratorFreezeTime.current ? Math.round((Date.now() - narratorFreezeTime.current) / 1000) : '?'
+            narratorFreezeTime.current = null
+            console.log(`%c[Narrator] DONE (turnComplete) — narrator spoke for ${frozenFor}s`, 'color: #f59e0b; font-weight: bold')
+            console.log(`%c[Timer] RESUMED — server timeout already ran for ${frozenFor}s`, 'color: #34d399; font-weight: bold')
             break
           }
           case 'suspicion_update': {
@@ -184,12 +188,6 @@ export function useGameSocket() {
             const { addBehavioralNote } = useGameStore.getState()
             addBehavioralNote(msg.playerName, msg.note)
             console.log(`%c[Behavior] ${msg.playerName}: ${msg.note}`, 'color: #ec4899')
-            break
-          }
-          case 'bot_speech': {
-            const { setPendingBotSpeech } = useGameStore.getState()
-            setPendingBotSpeech({ playerName: msg.playerName, message: msg.message })
-            console.log(`%c[Bot:${msg.playerName}] ${msg.message}`, 'color: #22d3ee; font-weight: bold')
             break
           }
           case 'game_over':
