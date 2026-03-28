@@ -114,6 +114,7 @@ export async function handleClientEvent(
     case 'text_command': {
       const game = findGameByPlayer(ws.data.playerId)
       if (!game) return
+      console.log(`[WS] Text command from ${ws.data.playerId}: "${event.text}"`)
       game.handleTextCommand(ws.data.playerId, event.text)
       break
     }
@@ -126,7 +127,15 @@ export async function handleClientEvent(
     }
 
     case 'face_metrics': {
-      // Face metrics disabled
+      const game = findGameByPlayer(ws.data.playerId)
+      if (game) {
+        game.handleFaceMetrics(ws.data.playerId, {
+          stress: event.stress,
+          surprise: event.surprise,
+          happiness: event.happiness,
+          lookingAway: event.lookingAway,
+        })
+      }
       break
     }
 
@@ -205,9 +214,16 @@ export function cleanupGame(roomId: string) {
   }
 }
 
+let audioLogCounter = 0
 export function handlePlayerAudio(playerId: string, audio: Buffer) {
   const game = findGameByPlayer(playerId)
-  if (!game) return
+  if (!game) {
+    if (audioLogCounter++ % 100 === 0) console.log(`[Audio] No game found for player ${playerId}`)
+    return
+  }
+  if (audioLogCounter++ % 50 === 0) {
+    console.log(`[Audio] Forwarding ${audio.length} bytes from ${playerId} to Gemini`)
+  }
   game.sendPlayerAudio(audio)
 }
 

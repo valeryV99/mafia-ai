@@ -57,6 +57,7 @@ export class GameManager {
   private silenceTimer: ReturnType<typeof setTimeout> | null = null
   private voiceFallbackTimeout: ReturnType<typeof setTimeout> | null = null
   private _gmAudioLogged = false
+  private faceMetricsCooldowns: Map<string, number> = new Map()
 
   private static readonly VOICE_AGENT_POOL = [
     {
@@ -1267,20 +1268,28 @@ export class GameManager {
 
   handleFaceMetrics(playerId: string, metrics: { stress: number; surprise: number; happiness: number; lookingAway: boolean }) {
     if (this.state.phase !== 'day' && this.state.phase !== 'voting') return
-
     const player = this.state.players.find((p) => p.id === playerId)
     if (!player || player.status !== 'alive') return
-
     const isNoteworthy = metrics.stress > 0.2 || metrics.surprise > 0.3 || metrics.lookingAway || metrics.happiness > 0.4
     if (!isNoteworthy) return
-
+    const now = Date.now()
+    const lastSent = this.faceMetricsCooldowns.get(playerId) ?? 0
+    if (now - lastSent < 20_000) return
+    this.faceMetricsCooldowns.set(playerId, now)
     const observations: string[] = []
     if (metrics.stress > 0.2) observations.push(`stress level ${(metrics.stress * 100).toFixed(0)}%`)
     if (metrics.surprise > 0.6) observations.push(`surprised expression ${(metrics.surprise * 100).toFixed(0)}%`)
     if (metrics.lookingAway) observations.push('looking away from camera')
     if (metrics.happiness > 0.4) observations.push(`smiling ${(metrics.happiness * 100).toFixed(0)}%`)
     if (metrics.happiness > 0.4 && metrics.stress > 0.2) observations.push('possible nervous smile')
-
+    if (observations.length === 0) return
+    this.bridge?.sendText(
+      `[FACE_ANALYSIS] ${player.name} shows: ${observations.join(', ')}. You may briefly comment on this if relevant to the discussion.`
+    )
+    this.broadcastEvent({ type: 'behavioral_note', playerName: player.name, note: observations.join(', ') })
+    if (metrics.stress > 0.2) {
+      this.broadcastEvent({ type: 'stress_alert', playerId, playerName: player.name, level: metrics.stress })
+    }
   }
 
   sendPlayerAudio(_chunk: Buffer) {
