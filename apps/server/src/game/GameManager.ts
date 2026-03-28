@@ -546,12 +546,21 @@ export class GameManager {
         this.log('GM', `Tool call from Gemini: ${name}(${JSON.stringify(args)})`)
         this.handleGeminiCommand({ action: name, ...args } as any)
       },
+
+      onSpeakerChanged: (peerId) => {
+        const playerName = this.fishjamPeerNames.get(peerId)
+        if (playerName) {
+          const player = this.state.players.find((p) => p.name === playerName)
+          if (player) this.broadcastEvent({ type: 'speaker_changed', speakerId: player.id })
+        }
+        return playerName
+      },
     })
 
     // skipVAD=true: all player audio reaches Gemini continuously (no floor-VAD blocking)
-    // disableAudioInput=true: player audio reaches Gemini via WebSocket direct (sendPlayerAudioDirect),
-    // NOT via Fishjam trackData — avoids dual-source interference and VAD conflicts
-    await this.bridge.start(this.fishjamRoomId, prompt, tools, 'Orus', false, true, true)
+    // disableAudioInput=false: Fishjam trackData forwards player audio to Gemini (native peerId speaker identification)
+    // skipVAD=true: all audio forwarded continuously, Gemini handles VAD internally
+    await this.bridge.start(this.fishjamRoomId, prompt, tools, 'Orus', false, true, false)
     this.log('startGame', `Bridge READY — Game Master connected`)
 
     setTimeout(() => this.startNight(), GAME_CONSTANTS.ROLE_REVEAL_DELAY)
@@ -1355,41 +1364,11 @@ export class GameManager {
     return (energy / int16.length) > 80
   }
 
-  sendPlayerAudio(playerId: string, chunk: Buffer) {
-    this.playerAudioChunks++
-
-    // Only track speaker when actual voice detected (not silence/noise)
-    if (this.hasVoice(chunk) && playerId !== this.currentAudioSpeakerId) {
-      const player = this.state.players.find((p) => p.id === playerId)
-      if (player) {
-        this.currentAudioSpeakerId = playerId
-        this.bridge?.sendText(`[SPEAKER] ${player.name} is now speaking.`)
-        this.broadcastEvent({ type: 'speaker_changed', speakerId: playerId })
-      }
-    }
-
-    // Reset after 2s silence from current speaker
-    if (this.hasVoice(chunk) && playerId === this.currentAudioSpeakerId) {
-      if (this.speakerSilenceTimer) clearTimeout(this.speakerSilenceTimer)
-      this.speakerSilenceTimer = setTimeout(() => {
-        this.currentAudioSpeakerId = null
-        this.broadcastEvent({ type: 'speaker_changed', speakerId: null })
-      }, 2000)
-    }
-
-    if (!this.bridge) {
-      if (this.playerAudioChunks % 200 === 0)
-        this.log('playerAudio', `DROP: bridge=null (chunks received: ${this.playerAudioChunks})`)
-      return
-    }
-    if (this.playerAudioChunks === 1) {
-      this.log('playerAudio', `First audio chunk from player: ${chunk.length}b — forwarding to Gemini`)
-    }
-    if (this.playerAudioChunks % 500 === 0) {
-      this.log('playerAudio', `chunks=${this.playerAudioChunks}, phase=${this.state.phase}`)
-    }
-    this.bridge.sendPlayerAudioDirect(chunk)
+  sendPlayerAudio(_playerId: string, _chunk: Buffer) {
+    // No-op: audio reaches Gemini via Fishjam SFU trackData (native peerId speaker identification)
   }
+
+  // WebSocket direct audio path removed — Fishjam SFU trackData handles audio delivery to Gemini
 
   private eliminatePlayer(playerId: string) {
     const player = this.state.players.find((p) => p.id === playerId)

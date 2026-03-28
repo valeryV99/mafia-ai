@@ -11,6 +11,7 @@ export interface AgentBridgeCallbacks {
   onTurnComplete?: () => void
   onSessionClose?: () => void
   onToolCall?: (name: string, args: Record<string, unknown>) => void
+  onSpeakerChanged?: (peerId: string) => string | undefined  // returns playerName or undefined
 }
 
 export class AgentBridge {
@@ -156,13 +157,16 @@ export class AgentBridge {
     this.log('start', `Registered listeners for: ${knownEvents.join(', ')}`)
 
     let trackDataCount = 0
+    let currentSpeakerPeerId: string | null = null
+    let speakerSilenceTimer: ReturnType<typeof setTimeout> | null = null
+
     agent.on('trackData', (event: any) => {
       trackDataCount++
       if (trackDataCount === 1) {
         this.log('audio', `First trackData received from peer=${event.peerId} (${Buffer.from(event.data).length}b) — audio pipeline active`)
       }
       if (trackDataCount % 500 === 0) {
-        this.log('audio', `trackData count: ${trackDataCount}, muteInput=${this.muteInput}, geminiAlive=${!!this.geminiSession}`)
+        this.log('audio', `trackData count: ${trackDataCount}, muteInput=${this.muteInput}, geminiAlive=${!!this.geminiSession}, currentSpeaker=${currentSpeakerPeerId}`)
       }
 
       if (this.muteInput) return
@@ -170,12 +174,28 @@ export class AgentBridge {
       const { peerId, data } = event
 
       if (skipVAD) {
-        // Native VAD mode: only forward audio from allowed peers, let Gemini decide when to respond
         if (this.allowedPeerIds !== null && !this.allowedPeerIds.has(peerId)) return
         if (!this.geminiSession) {
           if (trackDataCount % 200 === 0) this.log('audio', 'WARNING: No Gemini session — audio dropped')
           return
         }
+
+        // Speaker identification via peerId — notify Gemini when speaker changes
+        if (this.hasVoice(data) && peerId !== currentSpeakerPeerId) {
+          currentSpeakerPeerId = peerId
+          const speakerName = this.callbacks.onSpeakerChanged?.(peerId)
+          if (speakerName) {
+            this.geminiSession.sendClientContent({ turns: [{ role: 'user', parts: [{ text: `[SPEAKER] ${speakerName} is now speaking.` }] }], turnComplete: false })
+            this.log('audio', `Speaker changed → ${speakerName} (peer=${peerId.slice(0, 8)})`)
+          }
+        }
+
+        // Reset speaker after 2s silence
+        if (this.hasVoice(data) && peerId === currentSpeakerPeerId) {
+          if (speakerSilenceTimer) clearTimeout(speakerSilenceTimer)
+          speakerSilenceTimer = setTimeout(() => { currentSpeakerPeerId = null }, 2000)
+        }
+
         this.geminiSession.sendRealtimeInput({
           audio: {
             mimeType: GeminiIntegration.inputMimeType,
