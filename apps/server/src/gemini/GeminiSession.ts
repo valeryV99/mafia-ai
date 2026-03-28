@@ -16,10 +16,10 @@ export function buildGameTools(playerNames: string[]) {
       parameters: {
         type: 'OBJECT',
         properties: {
-          voter: { type: 'STRING', description: 'Mafia player making the kill', enum: playerNames },
           target: { type: 'STRING', description: 'Player to eliminate', enum: playerNames },
+          voter: { type: 'STRING', description: 'Mafia player making the kill (optional)', enum: playerNames },
         },
-        required: ['voter', 'target'],
+        required: ['target'],
       },
     },
     {
@@ -28,10 +28,10 @@ export function buildGameTools(playerNames: string[]) {
       parameters: {
         type: 'OBJECT',
         properties: {
-          voter: { type: 'STRING', description: 'The detective', enum: playerNames },
           target: { type: 'STRING', description: 'Player to investigate', enum: playerNames },
+          voter: { type: 'STRING', description: 'The detective (optional)', enum: playerNames },
         },
-        required: ['voter', 'target'],
+        required: ['target'],
       },
     },
     {
@@ -40,10 +40,10 @@ export function buildGameTools(playerNames: string[]) {
       parameters: {
         type: 'OBJECT',
         properties: {
-          voter: { type: 'STRING', description: 'The doctor', enum: playerNames },
           target: { type: 'STRING', description: 'Player to protect', enum: playerNames },
+          voter: { type: 'STRING', description: 'The doctor (optional)', enum: playerNames },
         },
-        required: ['voter', 'target'],
+        required: ['target'],
       },
     },
     {

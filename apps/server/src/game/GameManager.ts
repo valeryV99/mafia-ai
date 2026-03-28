@@ -734,6 +734,14 @@ export class GameManager {
         break
       }
 
+      case 'behavioral_note': {
+        const player = this.state.players.find((p) => p.name.toLowerCase() === cmd.player?.toLowerCase())
+        if (player && cmd.note) {
+          this.broadcastEvent({ type: 'behavioral_note', playerName: player.name, note: cmd.note })
+        }
+        break
+      }
+
       case 'address_agent': {
         const agentName = (cmd as any).name as string
         if (!agentName) break
