@@ -29,6 +29,7 @@ export class AgentBridge {
   private silenceTimeout: ReturnType<typeof setTimeout> | null = null
   private readonly SILENCE_THRESHOLD = 300
 
+
   // Audio filter — only forward audio from known human peers
   private allowedPeerIds: Set<string> | null = null
   private narratorSpeaking = false
@@ -370,12 +371,18 @@ export class AgentBridge {
 
   private _sendTextNow(message: string) {
     try {
+      // Mark narrator as speaking immediately — don't wait for the first audio chunk.
+      // Between sendText and the first audio chunk (~1-2s), narratorSpeaking was false,
+      // allowing a second sendText to slip through and cause Gemini 1008 errors.
+      this.narratorSpeaking = true
+      this.narratorStartedAt = Date.now()
       this.geminiSession?.sendClientContent({
         turns: [{ role: 'user', parts: [{ text: message }] }],
         turnComplete: true,
       })
     } catch (err) {
       this.log('sendText', `[${this.name}] ERROR:`, err)
+      this.narratorSpeaking = false
     }
   }
 

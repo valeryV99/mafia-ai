@@ -1,5 +1,6 @@
 import type { Phase, Player, Role } from '@mafia-ai/types'
 import type { FaceMetrics } from '@/entities/game'
+import { useGameStore } from '@/entities/game/model/store'
 // import { AgentVoiceControls } from '@/widgets/agent-voice-controls'
 
 function phaseHint(phase: Phase, myRole: Role | null): string {
@@ -64,10 +65,12 @@ export function RoomInGameStatusBar({
   onToggleMicrophoneMute,
 }: RoomInGameStatusBarProps) {
   const hint = phaseHint(phase, myRole)
+  const playerTranscripts = useGameStore((s) => s.playerTranscripts)
+  const playerEntries = Object.entries(playerTranscripts)
 
   return (
     <div className="mb-4 space-y-3">
-      <div className="bg-black/60 rounded-lg px-4 py-3 min-h-[48px] flex items-center">
+      <div className="bg-black/60 rounded-lg px-4 py-3 min-h-[48px] flex flex-col gap-1">
         {lastTranscript?.speaker === 'gemini' ? (
           <p className="text-sm text-amber-400 flex items-center gap-2">
             {isNarratorSpeaking && (
@@ -80,6 +83,11 @@ export function RoomInGameStatusBar({
         ) : (
           <p className="text-sm text-[#555] italic">Listening...</p>
         )}
+        {playerEntries.map(([name, text]) => (
+          <p key={name} className="text-sm text-cyan-300">
+            <span className="font-bold">{name}:</span> {text}
+          </p>
+        ))}
       </div>
 
       <div className="flex items-center justify-between">
