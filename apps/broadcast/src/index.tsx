@@ -110,20 +110,26 @@ function connectToGame() {
   ws.onerror = (err) => console.error('[Broadcast] WS error:', err)
 }
 
+const SMELTER_SUPPORTED = process.platform === 'linux' || process.platform === 'darwin'
+
 async function main() {
-  console.log('[Broadcast] Initializing Smelter...')
-  smelterInstance = new Smelter()
-  await smelterInstance.init()
+  if (SMELTER_SUPPORTED) {
+    console.log('[Broadcast] Initializing Smelter...')
+    smelterInstance = new Smelter()
+    await smelterInstance.init()
 
-  await smelterInstance.registerShader('grayscale', { source: GRAYSCALE_SHADER })
-  await smelterInstance.registerShader('night_darken', { source: NIGHT_SHADER })
-  await smelterInstance.registerShader('stress_pulse', { source: STRESS_SHADER })
-  console.log('[Broadcast] Shaders registered')
+    await smelterInstance.registerShader('grayscale', { source: GRAYSCALE_SHADER })
+    await smelterInstance.registerShader('night_darken', { source: NIGHT_SHADER })
+    await smelterInstance.registerShader('stress_pulse', { source: STRESS_SHADER })
+    console.log('[Broadcast] Shaders registered')
 
-  await updateScene()
-  await smelterInstance.start()
+    await updateScene()
+    await smelterInstance.start()
+    console.log('[Broadcast] Smelter started — spectator: http://localhost:9000/whep/broadcast')
+  } else {
+    console.warn(`[Broadcast] Smelter not supported on ${process.platform} — running in spectator-only mode (no stream output)`)
+  }
 
-  console.log('[Broadcast] Smelter started — spectator: http://localhost:9000/whep/broadcast')
   connectToGame()
 }
 
