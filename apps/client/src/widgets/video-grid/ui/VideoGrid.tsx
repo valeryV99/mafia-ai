@@ -39,8 +39,9 @@ export function VideoGrid({ players, playerId, playerName, localPeer, remotePeer
   const currentSpeakerId = useGameStore((s) => s.currentSpeakerId)
   const playerTranscripts = useGameStore((s) => s.playerTranscripts)
   const playerStress = useGameStore((s) => s.playerStress)
+  const gameState = useGameStore((s) => s.gameState)
 
-  // Build a map: playerName → Fishjam stream
+  // Build a map: playerName → stream
   const streamByName = new Map<string, MediaStream | null>()
 
   if (localPeer && playerName) {
@@ -56,16 +57,13 @@ export function VideoGrid({ players, playerId, playerName, localPeer, remotePeer
   // Play ALL remote peers' audio (including Fishjam Agent = AI voice)
   const allAudioStreams: MediaStream[] = []
   for (const peer of remotePeers) {
-    // Check all tracks — agent uses custom tracks, not microphoneTrack
     for (const track of peer.tracks) {
       if (track.stream) allAudioStreams.push(track.stream)
     }
   }
 
-  // Render one tile per game player — no duplicates possible
   return (
     <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3 mb-5">
-      {/* Hidden audio players for ALL remote peers (including AI agent) */}
       {allAudioStreams.map((stream, i) => (
         <AudioPlayer key={`audio-${i}`} stream={stream} />
       ))}
@@ -85,6 +83,7 @@ export function VideoGrid({ players, playerId, playerName, localPeer, remotePeer
               isSpeaking={player.id === currentSpeakerId}
               transcript={playerTranscripts[player.name]}
               stressLevel={playerStress[player.id] ?? 0}
+              phase={gameState?.phase}
             />
           </div>
         )

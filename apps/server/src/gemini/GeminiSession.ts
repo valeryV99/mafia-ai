@@ -1,87 +1,100 @@
 const log = (tag: string, ...args: unknown[]) => console.log(`[Gemini:${tag}]`, ...args)
 
-const GAME_TOOLS = [
-  {
-    name: 'night_kill',
-    description: 'Mafia chooses a player to eliminate during night phase',
-    parameters: {
-      type: 'OBJECT',
-      properties: {
-        target: { type: 'STRING', description: 'Name of the player to eliminate' }
+// Gemini 2.5 Flash with native audio I/O — optimized for real-time voice conversations
+const GEMINI_MODEL = 'models/gemini-2.5-flash-native-audio-preview-12-2025'
+
+/**
+ * Build tool declarations with dynamic enum constraints.
+ * Passing valid player names as enums significantly reduces hallucinated names
+ * and ensures tool calls reference actual game participants.
+ */
+export function buildGameTools(playerNames: string[]) {
+  return [
+    {
+      name: 'night_kill',
+      description: 'Mafia eliminates a player during night. Call immediately when you hear the mafia player say a target name.',
+      parameters: {
+        type: 'OBJECT',
+        properties: {
+          voter: { type: 'STRING', description: 'Mafia player making the kill', enum: playerNames },
+          target: { type: 'STRING', description: 'Player to eliminate', enum: playerNames },
+        },
+        required: ['voter', 'target'],
       },
-      required: ['target']
-    }
-  },
-  {
-    name: 'investigate',
-    description: 'Detective investigates a player during night phase to learn if they are mafia',
-    parameters: {
-      type: 'OBJECT',
-      properties: {
-        target: { type: 'STRING', description: 'Name of the player to investigate' }
+    },
+    {
+      name: 'investigate',
+      description: 'Detective checks if a player is mafia. Call immediately when the detective says a target name.',
+      parameters: {
+        type: 'OBJECT',
+        properties: {
+          voter: { type: 'STRING', description: 'The detective', enum: playerNames },
+          target: { type: 'STRING', description: 'Player to investigate', enum: playerNames },
+        },
+        required: ['voter', 'target'],
       },
-      required: ['target']
-    }
-  },
-  {
-    name: 'doctor_save',
-    description: 'Doctor chooses a player to protect from elimination during night phase',
-    parameters: {
-      type: 'OBJECT',
-      properties: {
-        target: { type: 'STRING', description: 'Name of the player to save' }
+    },
+    {
+      name: 'doctor_save',
+      description: 'Doctor protects a player from elimination. Call immediately when the doctor says a target name.',
+      parameters: {
+        type: 'OBJECT',
+        properties: {
+          voter: { type: 'STRING', description: 'The doctor', enum: playerNames },
+          target: { type: 'STRING', description: 'Player to protect', enum: playerNames },
+        },
+        required: ['voter', 'target'],
       },
-      required: ['target']
-    }
-  },
-  {
-    name: 'resolve_night',
-    description: 'Called after all night actions (mafia, detective, doctor) are collected to end the night phase',
-    parameters: { type: 'OBJECT', properties: {} }
-  },
-  {
-    name: 'start_voting',
-    description: 'Transition from day discussion to voting phase when discussion is done',
-    parameters: { type: 'OBJECT', properties: {} }
-  },
-  {
-    name: 'cast_vote',
-    description: 'Record a player vote to eliminate someone during voting phase',
-    parameters: {
-      type: 'OBJECT',
-      properties: {
-        voter: { type: 'STRING', description: 'Name of the player casting the vote' },
-        target: { type: 'STRING', description: 'Name of the player being voted against' }
+    },
+    {
+      name: 'resolve_night',
+      description: 'End the night phase and resolve all actions. Call only after ALL night actions are collected.',
+      parameters: { type: 'OBJECT', properties: {} },
+    },
+    {
+      name: 'start_voting',
+      description: 'Transition from day discussion to voting. Call after sufficient discussion (30+ seconds).',
+      parameters: { type: 'OBJECT', properties: {} },
+    },
+    {
+      name: 'cast_vote',
+      description: 'Record a player vote to eliminate someone. Call the moment you hear the voter say a valid target name.',
+      parameters: {
+        type: 'OBJECT',
+        properties: {
+          voter: { type: 'STRING', description: 'Player casting the vote', enum: playerNames },
+          target: { type: 'STRING', description: 'Player being voted against', enum: playerNames },
+        },
+        required: ['voter', 'target'],
       },
-      required: ['voter', 'target']
-    }
-  },
-  {
-    name: 'update_suspicion',
-    description: 'Update the suspicion level of a player based on their behavior, voice tone, arguments, or contradictions. Call this during day discussion whenever you notice something suspicious or innocent about a player.',
-    parameters: {
-      type: 'OBJECT',
-      properties: {
-        player: { type: 'STRING', description: 'Name of the player' },
-        score: { type: 'NUMBER', description: 'Suspicion level from 1 (innocent) to 10 (very suspicious)' },
-        reason: { type: 'STRING', description: 'Brief reason for the score, e.g. "defensive when questioned" or "logical alibi"' }
+    },
+    {
+      name: 'update_suspicion',
+      description: 'Update suspicion level for a player based on speech, behavior, contradictions, and face analysis data.',
+      parameters: {
+        type: 'OBJECT',
+        properties: {
+          player: { type: 'STRING', description: 'Player name', enum: playerNames },
+          score: { type: 'NUMBER', description: 'Suspicion 1 (innocent) to 10 (highly suspicious)' },
+          reason: { type: 'STRING', description: 'Brief reason: "defensive when questioned", "contradicted earlier claim"' },
+        },
+        required: ['player', 'score', 'reason'],
       },
-      required: ['player', 'score', 'reason']
-    }
-  },
-  {
-    name: 'behavioral_note',
-    description: 'Record a behavioral observation about a player. Use for noting contradictions, alliances, nervousness, confidence, or any interesting behavioral pattern.',
-    parameters: {
-      type: 'OBJECT',
-      properties: {
-        player: { type: 'STRING', description: 'Name of the player' },
-        note: { type: 'STRING', description: 'Behavioral observation, e.g. "Changed story about last night", "Defending Bruno aggressively", "Voice trembling"' }
+    },
+    {
+      name: 'behavioral_note',
+      description: 'Record a behavioral observation — contradictions, alliances, emotional signals from face analysis, voice patterns.',
+      parameters: {
+        type: 'OBJECT',
+        properties: {
+          player: { type: 'STRING', description: 'Player name', enum: playerNames },
+          note: { type: 'STRING', description: 'Observation: "Changed story", "High stress when accused", "Avoiding eye contact"' },
+        },
+        required: ['player', 'note'],
       },
-      required: ['player', 'note']
-    }
-  },
-]
+    },
+  ]
+}
 
 export class GeminiSession {
   private ws: WebSocket | null = null
@@ -94,16 +107,21 @@ export class GeminiSession {
   private audioChunkCount = 0
   private totalAudioBytes = 0
   private systemPrompt = ''
+  private tools: ReturnType<typeof buildGameTools> = []
+  private voiceName = 'Orus'
 
   constructor(apiKey: string) {
     this.apiKey = apiKey
   }
 
-  async connect(systemPrompt: string): Promise<void> {
+  async connect(systemPrompt: string, tools?: ReturnType<typeof buildGameTools>, voiceName?: string): Promise<void> {
     this.systemPrompt = systemPrompt
+    if (tools) this.tools = tools
+    if (voiceName) this.voiceName = voiceName
+
     const url = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${this.apiKey}`
 
-    log('connect', 'Connecting to Gemini Live...')
+    log('connect', `Connecting to ${GEMINI_MODEL} (voice: ${this.voiceName})...`)
 
     return new Promise((resolve, reject) => {
       this.ws = new WebSocket(url)
@@ -113,23 +131,24 @@ export class GeminiSession {
         this.ws!.send(
           JSON.stringify({
             setup: {
-              model: 'models/gemini-2.5-flash-native-audio-preview-12-2025',
+              model: GEMINI_MODEL,
               systemInstruction: {
                 parts: [{ text: systemPrompt }],
               },
               generationConfig: {
                 responseModalities: ['AUDIO'],
+                temperature: 0.8,
                 speechConfig: {
                   voiceConfig: {
                     prebuiltVoiceConfig: {
-                      voiceName: 'Orus'
-                    }
-                  }
-                }
+                      voiceName: this.voiceName,
+                    },
+                  },
+                },
               },
               inputAudioTranscription: {},
               outputAudioTranscription: {},
-              tools: [{ functionDeclarations: GAME_TOOLS }],
+              tools: [{ functionDeclarations: this.tools }],
             },
           })
         )
@@ -146,14 +165,13 @@ export class GeminiSession {
           return
         }
 
-        // Setup complete
         if (msg.setupComplete) {
           log('connect', 'Session ready')
           resolve()
           return
         }
 
-        // Tool calls from Gemini
+        // Tool calls — Gemini requests game actions
         const toolCall = msg.toolCall
         if (toolCall) {
           const functionCalls = toolCall.functionCalls || []
@@ -161,16 +179,15 @@ export class GeminiSession {
             log('toolCall', `${fc.name}(${JSON.stringify(fc.args)})`)
             this.onCommandCallback?.({ action: fc.name, ...fc.args })
 
-            // Send tool response back to Gemini
-            this.sendToolResponse(fc.id, fc.name, { success: true })
+            // Return structured response so Gemini knows the action result
+            this.sendToolResponse(fc.id, fc.name, { success: true, action: fc.name })
           }
         }
 
-        // Model turn — audio parts
+        // Audio output from Gemini
         const parts = msg.serverContent?.modelTurn?.parts
         if (parts) {
           for (const part of parts) {
-            // Audio chunk
             if (part.inlineData?.data) {
               let audio: Buffer
               try {
@@ -186,21 +203,21 @@ export class GeminiSession {
           }
         }
 
-        // Input transcription (what player said)
+        // Input transcription (STT of what player said)
         if (msg.serverContent?.inputTranscription?.text) {
           const text = msg.serverContent.inputTranscription.text
           log('heard', `"${text}"`)
           this.onTranscriptCallback?.('player', text)
         }
 
-        // Output transcription (what Gemini said)
+        // Output transcription (TTS text of what Gemini said)
         if (msg.serverContent?.outputTranscription?.text) {
           const text = msg.serverContent.outputTranscription.text
           log('said', `"${text}"`)
           this.onTranscriptCallback?.('gemini', text)
         }
 
-        // Turn complete
+        // Turn complete — Gemini finished speaking
         if (msg.serverContent?.turnComplete) {
           log('turn', `Complete (${this.audioChunkCount} chunks, ${(this.totalAudioBytes / 1024).toFixed(1)}KB audio)`)
           this.audioChunkCount = 0
@@ -230,8 +247,8 @@ export class GeminiSession {
           id: functionCallId,
           name: functionName,
           response: result,
-        }]
-      }
+        }],
+      },
     }))
   }
 
@@ -242,7 +259,7 @@ export class GeminiSession {
       return
     }
     if (this.ws.readyState !== WebSocket.OPEN) {
-      if (this.audioSendLog++ % 100 === 0) log('sendAudio', `WebSocket not open (state: ${this.ws.readyState}) — dropped`)
+      if (this.audioSendLog++ % 100 === 0) log('sendAudio', `Not open (state: ${this.ws.readyState}) — dropped`)
       return
     }
     this.ws.send(JSON.stringify({
@@ -250,8 +267,8 @@ export class GeminiSession {
         audio: {
           mimeType: 'audio/pcm;rate=16000',
           data: chunk.toString('base64'),
-        }
-      }
+        },
+      },
     }))
   }
 
@@ -269,29 +286,15 @@ export class GeminiSession {
       clientContent: {
         turns: [{ role: 'user', parts: [{ text: message }] }],
         turnComplete: true,
-      }
+      },
     }))
   }
 
-  onAudioResponse(cb: (audio: Buffer) => void) {
-    this.onAudioCallback = cb
-  }
-
-  onCommand(cb: (cmd: Record<string, string>) => void) {
-    this.onCommandCallback = cb
-  }
-
-  onTranscript(cb: (speaker: 'gemini' | 'player', text: string) => void) {
-    this.onTranscriptCallback = cb
-  }
-
-  onTurnComplete(cb: () => void) {
-    this.onTurnCompleteCallback = cb
-  }
-
-  onClose(cb: () => void) {
-    this.onCloseCallback = cb
-  }
+  onAudioResponse(cb: (audio: Buffer) => void) { this.onAudioCallback = cb }
+  onCommand(cb: (cmd: Record<string, string>) => void) { this.onCommandCallback = cb }
+  onTranscript(cb: (speaker: 'gemini' | 'player', text: string) => void) { this.onTranscriptCallback = cb }
+  onTurnComplete(cb: () => void) { this.onTurnCompleteCallback = cb }
+  onClose(cb: () => void) { this.onCloseCallback = cb }
 
   async reconnect(): Promise<void> {
     log('reconnect', 'Attempting reconnect...')
@@ -301,7 +304,7 @@ export class GeminiSession {
   }
 
   disconnect() {
-    this.onCloseCallback = null // prevent reconnect loop
+    this.onCloseCallback = null
     log('disconnect', 'Closing session')
     this.ws?.close()
     this.ws = null

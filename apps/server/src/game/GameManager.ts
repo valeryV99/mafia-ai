@@ -2,6 +2,7 @@ import type { GameState, Player, Phase, Role, ServerEvent } from '@mafia-ai/type
 import type { ServerWebSocket } from 'bun'
 import { AgentBridge } from '../fishjam/AgentBridge'
 import { buildGameMasterPrompt } from '../gemini/prompts'
+import { buildGameTools } from '../gemini/GeminiSession'
 import { GAME_CONSTANTS } from './constants'
 import { VoiceAgent } from './VoiceAgent'
 
@@ -484,16 +485,9 @@ export class GameManager {
       doctorName: doctor?.name || 'none',
     })
 
-    const tools = [
-      { name: 'night_kill', description: 'Mafia chooses a player to eliminate during night phase', parameters: { type: 'OBJECT', properties: { target: { type: 'STRING' } }, required: ['target'] } },
-      { name: 'investigate', description: 'Detective investigates a player to learn their role', parameters: { type: 'OBJECT', properties: { target: { type: 'STRING' } }, required: ['target'] } },
-      { name: 'doctor_save', description: 'Doctor protects a player from mafia kill', parameters: { type: 'OBJECT', properties: { target: { type: 'STRING' } }, required: ['target'] } },
-      { name: 'resolve_night', description: 'Called after all night actions are collected to end the night phase', parameters: { type: 'OBJECT', properties: {} } },
-      { name: 'start_voting', description: 'Start voting phase after discussion', parameters: { type: 'OBJECT', properties: {} } },
-      { name: 'cast_vote', description: 'Record a vote from a player', parameters: { type: 'OBJECT', properties: { voter: { type: 'STRING' }, target: { type: 'STRING' } }, required: ['voter', 'target'] } },
-      { name: 'update_suspicion', description: 'Update suspicion level for a player', parameters: { type: 'OBJECT', properties: { player: { type: 'STRING' }, score: { type: 'NUMBER' }, reason: { type: 'STRING' } }, required: ['player', 'score', 'reason'] } },
-      { name: 'address_agent', description: 'Unmute a specific AI agent so they can respond when a player addresses them by name. Only call this when a player explicitly says an agent\'s name.', parameters: { type: 'OBJECT', properties: { name: { type: 'STRING', description: 'The agent name to unmute (e.g. Marcus, Sophie, Rex)' } }, required: ['name'] } },
-    ]
+    // Build tools with enum constraints on player names — prevents hallucinated targets
+    const playerNames = this.state.players.map((p) => p.name)
+    const tools = buildGameTools(playerNames)
 
     this.bridge = new AgentBridge(fishjamId, managementToken, apiKey, 'GameMaster')
     // No allowedPeerIds filter — GM hears all Fishjam participants (skipVAD lets Gemini handle VAD)
